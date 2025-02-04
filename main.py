@@ -16,6 +16,16 @@ if pygame.joystick.get_count() > 0:
 show_grid = True        # Видимость сетки
 
 # =========================
+# Глобальные переменные
+# =========================
+global_score = 0  # Добавлено для хранения очков
+bonus_active = False  # Флаг активного бонуса
+bonus_pos = (0, 0)  # Позиция бонуса
+bonus_blink = False  # Состояние мерцания бонуса
+last_bonus_blink = 0  # Время последнего мерцания
+enemy_counter = 0  # Счетчик появившихся врагов
+
+# =========================
 # Константы размеров
 # =========================
 CELL_SIZE = 32
@@ -73,6 +83,7 @@ number_sprites = {
     9: get_sprite(721, 383, 16, 16)
 }
 
+stage_text_sprite = get_sprite(656, 352, 80, 14)  # Спрайт "STAGE"
 level_icon_sprite = get_sprite(752, 368, 32, 32)  # Спрайт иконки уровня
 
 # Функция для рендеринга цифр уровня
@@ -106,10 +117,30 @@ player_sprites = {
 }
 
 enemy_sprites = {
-    "up": [get_sprite(256, 127, 32, 32), get_sprite(288, 127, 32, 32)],
-    "left": [get_sprite(320, 127, 32, 32), get_sprite(352, 127, 32, 32)],
-    "down": [get_sprite(384, 127, 32, 32), get_sprite(416, 127, 32, 32)],
-    "right": [get_sprite(448, 127, 32, 32), get_sprite(480, 127, 32, 32)]
+    1: {  # Обычный танк
+        "up": [get_sprite(256, 128, 32, 32), get_sprite(288, 128, 32, 32)],
+        "left": [get_sprite(320, 128, 32, 32), get_sprite(352, 128, 32, 32)],
+        "down": [get_sprite(384, 128, 32, 32), get_sprite(416, 128, 32, 32)],
+        "right": [get_sprite(448, 128, 32, 32), get_sprite(480, 128, 32, 32)]
+    },
+    2: {  # Бронетранспортер
+        "up": [get_sprite(256, 160, 32, 32), get_sprite(288, 160, 32, 32)],
+        "left": [get_sprite(320, 160, 32, 32), get_sprite(352, 160, 32, 32)],
+        "down": [get_sprite(384, 160, 32, 32), get_sprite(416, 160, 32, 32)],
+        "right": [get_sprite(448, 160, 32, 32), get_sprite(480, 160, 32, 32)]
+    },
+    3: {  # Скорострельный танк
+        "up": [get_sprite(256, 192, 32, 32), get_sprite(288, 192, 32, 32)],
+        "left": [get_sprite(320, 192, 32, 32), get_sprite(352, 192, 32, 32)],
+        "down": [get_sprite(384, 192, 32, 32), get_sprite(416, 192, 32, 32)],
+        "right": [get_sprite(448, 192, 32, 32), get_sprite(480, 192, 32, 32)]
+    },
+    4: {  # Тяжелый бронированный танк
+        "up": [get_sprite(256, 224, 32, 32), get_sprite(288, 224, 32, 32)],
+        "left": [get_sprite(320, 224, 32, 32), get_sprite(352, 224, 32, 32)],
+        "down": [get_sprite(384, 224, 32, 32), get_sprite(416, 224, 32, 32)],
+        "right": [get_sprite(448, 224, 32, 32), get_sprite(480, 224, 32, 32)]
+    }
 }
 
 bullet_sprites = {
@@ -169,6 +200,25 @@ spawn_group = pygame.sprite.Group()      # анимация появления (
 explosions = pygame.sprite.Group()       # анимация взрыва
 player_bullets = pygame.sprite.Group()   # пули игрока
 enemy_bullets = pygame.sprite.Group()    # пули врагов
+bonus_group = pygame.sprite.Group()
+
+# =========================
+# Класс Bonus
+# =========================
+class Bonus(pygame.sprite.Sprite):
+    def __init__(self, pos):
+        super().__init__()
+        self.image = pygame.Surface((32, 32))
+        self.image.fill((150, 150, 150))
+        self.rect = self.image.get_rect(center=pos)
+        self.spawn_time = pygame.time.get_ticks()
+        all_sprites.add(self)
+        bonus_group.add(self)  # Добавляем в отдельную группу
+
+    def update(self):
+        # Удаление бонуса через 10 секунд
+        if pygame.time.get_ticks() - self.spawn_time > 10000:
+            self.kill()
 
 # =========================
 # Класс для взрыва при попадании в стену
@@ -260,14 +310,23 @@ class SpawnAnimation(pygame.sprite.Sprite):
 # Класс Tank – базовый класс для танков (игрока и врагов)
 # =========================
 class Tank(pygame.sprite.Sprite):
-    def __init__(self, x, y, is_player=True):
+    def __init__(self, x, y, is_player=True, enemy_type=None):
         super().__init__()
         self.is_player = is_player
-        self.sprites = player_sprites if is_player else enemy_sprites
+        if is_player:
+            self.sprites = player_sprites  # Для игрока можно использовать общий словарь
+        else:
+            if enemy_type is None:
+                enemy_type = 1
+            # Создаем копии спрайтов для данного врага, чтобы изменения не влияли на глобальные спрайты
+            self.sprites = {
+                direction: [frame.copy() for frame in frames]
+                for direction, frames in enemy_sprites[enemy_type].items()
+            }
         self.current_sprite = 0
         self.last_update = pygame.time.get_ticks()
         self.animation_interval = 500
-        self.direction = "up"
+        self.direction = "up"  # начальное направление
         self.image = self.sprites[self.direction][self.current_sprite]
         self.rect = self.image.get_rect(center=(x, y))
         self.speed = 3
@@ -275,8 +334,11 @@ class Tank(pygame.sprite.Sprite):
         self.is_alive = True
         self.is_moving = False
         self.last_key = None
-        self.shield_unlimited = False  # Добавлено для бесконечного щита
-
+        self.shield_unlimited = False  # для бесконечного щита
+    
+    def ai_update(self):
+        """Базовый метод для ИИ управления (пустая реализация)"""
+        pass
     def update(self, input_keys):
         if self.is_alive and self.is_player:
             old_rect = self.rect.copy()
@@ -368,25 +430,122 @@ class Tank(pygame.sprite.Sprite):
 # Класс Enemy – танк врага
 # =========================
 class Enemy(Tank):
-    def __init__(self, x, y, initial_direction):
-        super().__init__(x, y, is_player=False)
+    def __init__(self, x, y, initial_direction, enemy_type=1, armor_level=1):
+        # Передаем enemy_type в базовый класс
+        super().__init__(x, y, is_player=False, enemy_type=enemy_type)
+        global enemy_counter
+        enemy_counter += 1
         self.change_direction_time = pygame.time.get_ticks() + random.randint(1000, 5000)
-        self.speed = 2  # скорость уменьшена (от 3 до 2)
+        self.speed = 2  # базовая скорость для врагов
         self.direction = initial_direction
         self.spawn_time = datetime.now().strftime("%H:%M:%S")
         self.destroy_time = None
+        self.enemy_type = enemy_type
+        self.armor_level = armor_level
+        # Если танк тяжелый, можно менять его параметры и цвет:
+        if enemy_type == 4:
+            self.max_health = armor_level + 1
+            self.health = self.max_health
+            self._update_color()  # обновляем цвет брони
+        self.image = self.sprites[self.direction][self.current_sprite]
+        self.rect = self.image.get_rect(center=self.rect.center)
+        
+        # Настройка характеристик
+        if enemy_type == 1:  # Обычный танк
+            self.speed = 2
+            self.bullet_speed = 8
+            self.score_value = 100
+        elif enemy_type == 2:  # Бронетранспортёр
+            self.speed = 4
+            self.bullet_speed = 6
+            self.score_value = 200
+        elif enemy_type == 3:  # Скорострельный танк
+            self.speed = 2
+            self.bullet_speed = 14
+            self.score_value = 300
+        elif enemy_type == 4:  # Тяжелый танк
+            self.speed = 1
+            self.bullet_speed = 6
+            self.armor_level = armor_level
+            self.max_health = armor_level + 1
+            self.health = self.max_health
+            self.score_value = 400
+            self._update_color()
+        
+        # Мерцание для определенных танков
+        self.is_special = enemy_counter in [4, 11, 18]
+        self.blink_state = False
+        self.last_blink = 0
+    def _update_color(self):
+        # Изменение цвета для тяжелых танков
+        colors = {
+            1: (100, 200, 100),   # Светло-зеленый
+            2: (200, 200, 100),   # Желтый
+            3: (50, 100, 50)      # Темно-зеленый
+        }
+        if self.enemy_type == 4:
+            color = colors.get(self.armor_level, (255, 255, 255))
+            for frame in self.sprites[self.direction]:
+                frame.fill(color, special_flags=pygame.BLEND_RGB_MULT)
+    
+    def take_damage(self):
+        global bonus_active
+        if self.enemy_type == 4:
+            self.health -= 1
+            # Спавн бонуса при первом попадании в специальный танк
+            if self.is_special and self.health == self.max_health - 1:
+            # Генерируем позицию бонуса в случайной клетке, исключая края
+                cols = GRID_COLS - 2  # Исключаем первый и последний столбец
+                rows = GRID_ROWS - 2  # Исключаем первую и последнюю строку
+                rand_col = random.randint(1, cols)
+                rand_row = random.randint(1, rows)
+                bonus_x = LEFT_MARGIN + (rand_col * CELL_SIZE) - CELL_SIZE//2
+                bonus_y = TOP_MARGIN + (rand_row * CELL_SIZE) - CELL_SIZE//2
+                bonus = Bonus((bonus_x, bonus_y))
+                bonus_active = True
 
+            if self.health <= 0:
+                self.destroy()
+                return True
+            else:
+                self._update_color()
+                return False
+        else:
+            self.destroy()
+            return True
+              
     def destroy(self):
-        self.destroy_time = datetime.now().strftime("%H:%M:%S")
+        global global_score, bonus_active
+        if not self.is_alive:  # Защита от повторного вызова
+            return
         Tank.destroy(self)
+        global_score += self.score_value
         # Уменьшаем счетчик оставшихся врагов уровня
         global enemies_remaining_level
         enemies_remaining_level -= 1
-        # Если все враги уровня убиты, переходим на следующий уровень
-        #if enemies_remaining_level <= 0 and len(enemies) == 0:
-        #    next_level()
+        # Спавн бонуса только для специальных танков
+        if self.is_special:
+            # Генерируем позицию бонуса в случайной клетке, исключая края
+            cols = GRID_COLS - 2  # Исключаем первый и последний столбец
+            rows = GRID_ROWS - 2  # Исключаем первую и последнюю строку
+            rand_col = random.randint(1, cols)
+            rand_row = random.randint(1, rows)
+            bonus_x = LEFT_MARGIN + (rand_col * CELL_SIZE) - CELL_SIZE//2
+            bonus_y = TOP_MARGIN + (rand_row * CELL_SIZE) - CELL_SIZE//2
+            bonus = Bonus((bonus_x, bonus_y))
+            bonus_active = True
 
     def ai_update(self):
+        # Мерцание специальных танков
+        if self.is_special and self.is_alive:
+            now = pygame.time.get_ticks()
+            if now - self.last_blink > 200:
+                self.blink_state = not self.blink_state
+                self.last_blink = now
+                if self.blink_state:
+                    self.image.fill((255, 0, 0), special_flags=pygame.BLEND_RGB_ADD)
+                else:
+                    self.image = self.sprites[self.direction][self.current_sprite]
         if not self.is_alive:
             return
         old_rect = self.rect.copy()
@@ -438,11 +597,11 @@ class Enemy(Tank):
 # Класс Bullet – пуля
 # =========================
 class Bullet(pygame.sprite.Sprite):
-    def __init__(self, x, y, direction, owner):
+    def __init__(self, x, y, direction, owner, speed=10):
         super().__init__()
         self.image = bullet_sprites[direction]
         self.rect = self.image.get_rect(center=(x, y))
-        self.speed = 10
+        self.speed = speed  # Добавлен параметр скорости
         self.direction = direction
         self.owner = owner
 
@@ -559,16 +718,35 @@ def spawn_player_callback(pos):
 # Функция обратного вызова для появления врага
 # =========================
 def spawn_enemy_callback(pos):
-    global enemies_to_spawn
-    allowed = ["down", "right"]  # Направления по умолчанию
+    global enemies_to_spawn, enemy_counter
+    
+    allowed = ["down", "right"]
     if pos[0] == LEFT_MARGIN + 12 * CELL_SIZE + 16:
         allowed = ["left", "down"]
     elif pos[0] == LEFT_MARGIN + 6 * CELL_SIZE + 16:
         allowed = ["left", "down", "right"]
     
     initial_direction = random.choice(allowed)
-    enemy = Enemy(pos[0], pos[1], initial_direction=initial_direction)
     
+    # Определение типа танка
+    enemy_type = 1
+    if enemies_to_spawn > 15:  # Первые 5 танков
+        enemy_type = random.choice([1, 2, 3])
+    elif enemies_to_spawn > 10:
+        enemy_type = random.choice([1, 2, 3, 4])
+    else:
+        enemy_type = 4 if random.random() < 0.3 else random.choice([1, 2, 3])
+    print(f"Спавн врага: тип={enemy_type}, координаты={pos}")
+    # Создание танка
+    if enemy_type == 4:
+        armor_level = random.randint(1, 3)
+        enemy = Enemy(pos[0], pos[1], initial_direction, enemy_type=4, armor_level=armor_level)
+    else:
+        enemy = Enemy(pos[0], pos[1], initial_direction, enemy_type=enemy_type)
+    
+    # Настройка скорости пуль
+    if enemy_type == 3:
+        enemy.bullet_speed = 14
     enemies.add(enemy)
     all_sprites.add(enemy)
     tank_group.add(enemy)
@@ -581,11 +759,22 @@ def spawn_enemy_callback(pos):
 # =========================
 def level_transition(level):
     start_sound.play()
-    original_surface = game_surface.copy()
-    total_width = GAME_WIDTH
-    total_height = GAME_HEIGHT
+    if level > 1 :
+        final_surface = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
+        final_surface.fill((99, 99,99))  # Черные отступы
+        pygame.draw.rect(final_surface, (0, 0, 0), FIELD_RECT)
 
-    # 1. Анимация заполнения серым цветом
+    # 0. Очистка всех спрайтов
+    global all_sprites, tank_group, enemies, spawn_group, explosions, player_bullets, enemy_bullets
+    all_sprites.empty()
+    tank_group.empty()
+    enemies.empty()
+    spawn_group.empty()
+    explosions.empty()
+    player_bullets.empty()
+    enemy_bullets.empty()
+
+    # 1. Фаза: Заполнение всего экрана серым с анимацией сверху и снизу
     anim_duration = 1200
     start_anim = pygame.time.get_ticks()
     
@@ -596,35 +785,52 @@ def level_transition(level):
             break
             
         ratio = elapsed / anim_duration
-        fill_height = int((total_height // 2) * ratio)
+        fill_height = int((WINDOW_HEIGHT // 2) * ratio)
         
-        game_surface.blit(original_surface, (0, 0))
-        pygame.draw.rect(game_surface, (99,99,99), (0, 0, total_width, fill_height))
-        pygame.draw.rect(game_surface, (99,99,99), 
-                        (0, total_height - fill_height, total_width, fill_height))
+        # Рисуем серые полосы на всем экране
+        screen.fill((0, 0, 0))
+        pygame.draw.rect(screen, (99,99,99), (0, 0, WINDOW_WIDTH, fill_height))
+        pygame.draw.rect(screen, (99,99,99), 
+                        (0, WINDOW_HEIGHT - fill_height, WINDOW_WIDTH, fill_height))
         
-        screen.blit(game_surface, (0, 0))
         pygame.display.flip()
         pygame.time.delay(16)
 
-    # 2. Отображение STAGE на сером фоне
-    stage_surface = pygame.Surface((total_width, total_height))
-    stage_surface.fill((99,99,99))
-    level_font = pygame.font.SysFont("consolas", 48, bold=True)
-    level_text = level_font.render(f"STAGE {level}", True, (255,255,255))
-    text_rect = level_text.get_rect(center=(total_width//2, total_height//2))
-    stage_surface.blit(level_text, text_rect)
+    # 2. Фаза: Отображение Stage в центре игрового поля
+    level_digits = render_level_number(level)
+    total_width = 80 + 16 + (16 * len(level_digits))
+    start_x = FIELD_RECT.left + (FIELD_RECT.width - total_width) // 2
+    start_y = FIELD_RECT.top + (FIELD_RECT.height - 14) // 2
+    
+    # Создаем поверхность с серым фоном
+    stage_surface = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
+    stage_surface.fill((99, 99, 99))
+    
+    # Рисуем надпись только в игровой зоне
+    stage_surface.blit(stage_text_sprite, (start_x, start_y))
+    digit_x = start_x + 80 + 16
+    for digit_sprite in level_digits:
+        stage_surface.blit(digit_sprite, (digit_x, start_y))
+        digit_x += 16
     
     screen.blit(stage_surface, (0, 0))
     pygame.display.flip()
     
-    # Ожидание окончания звука
+    # Ожидание звука
     while pygame.mixer.get_busy():
         pygame.time.wait(50)
 
-    # 3. Анимация раскрытия (исправленная версия)
+    # 3. Фаза: Раскрытие игровой зоны с сохранением отступов
     anim_duration = 1000
     start_anim = pygame.time.get_ticks()
+    
+    # Создаем маску для игровой зоны
+    mask_surface = pygame.Surface((FIELD_RECT.size), pygame.SRCALPHA)
+    
+    # Финальный кадр с отступами
+    final_surface = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
+    final_surface.fill((99, 99,99))  # Черные отступы
+    pygame.draw.rect(final_surface, (0, 0, 0), FIELD_RECT)  # Черное игровое поле
     
     while True:
         now = pygame.time.get_ticks()
@@ -633,29 +839,23 @@ def level_transition(level):
             break
             
         ratio = elapsed / anim_duration
-        current_height = int((total_height // 2) * (1 - ratio))
+        current_height = int((FIELD_RECT.height // 2) * (1 - ratio))
         
-        # Рисуем оригинальное игровое поле
-        game_surface.blit(original_surface, (0, 0))
+        # Рисуем маску на игровом поле
+        mask_surface.fill((99,99,99))
+        pygame.draw.rect(mask_surface, (0,0,0,0), 
+                        (0, current_height, 
+                         FIELD_RECT.width, 
+                         FIELD_RECT.height - 2*current_height))
         
-        # Создаем маску с серыми полосами
-        mask = pygame.Surface((total_width, total_height), pygame.SRCALPHA)
-        # Верхняя полоса
-        pygame.draw.rect(mask, (99,99,99,255), (0, 0, total_width, current_height))
-        # Нижняя полоса
-        pygame.draw.rect(mask, (99,99,99,255), 
-                        (0, total_height - current_height, total_width, current_height))
-        
-        # Накладываем маску поверх игрового поля
-        game_surface.blit(mask, (0,0))
-        
-        screen.blit(game_surface, (0, 0))
+        # Собираем итоговое изображение
+        screen.blit(final_surface, (0, 0))
+        screen.blit(mask_surface, FIELD_RECT.topleft)
         pygame.display.flip()
         pygame.time.delay(16)
 
-    # Финальный кадр - чистое игровое поле
-    game_surface.blit(original_surface, (0, 0))
-    screen.blit(game_surface, (0, 0))
+    # Финальный кадр
+    screen.blit(final_surface, (0, 0))
     pygame.display.flip()
 
 # =========================
@@ -894,8 +1094,16 @@ while True:
         for bullet, hit_enemies in hits.items():
             for enemy in hit_enemies:
                 if enemy.is_alive:
-                    enemy.destroy()
-
+                    destroyed = enemy.take_damage()
+                    if destroyed:
+                        # Начисление очков уже происходит в методе destroy()
+                        pass
+        # Обработка бонусов
+        if player is not None:
+            bonus_hit = pygame.sprite.spritecollide(player, bonus_group, True)
+            for bonus in bonus_hit:
+                global_score += 500
+                bonus_active = False
         # Если игрок сталкивается с пулями врагов и защитное поле не активно – уничтожаем игрока
         if player is not None:
             player_hits = pygame.sprite.spritecollide(player, enemy_bullets, True)
@@ -969,17 +1177,18 @@ while True:
         if len(level_digits) >= 2:
             screen.blit(level_digits[0], (496, 400))  # Первая цифра
             screen.blit(level_digits[1], (512, 400))  # Вторая цифра
+        # Счет
+        score_digits = render_number(global_score)
+        score_x = WINDOW_WIDTH // 2 - (len(score_digits) * 8)  # Центрирование
+        score_y = TOP_MARGIN // 2 - 8
+        for i, digit in enumerate(score_digits):
+            screen.blit(digit, (score_x + i*16, score_y))       
         # Если уровень окончен (все 20 врагов убиты)
-        if enemies_remaining_level <= 0 and enemies_to_spawn == 0 and len(enemies) == 0:
-            # Если первый раз обнаружили, что уровень "закрыт", запоминаем время
+        if enemies_remaining_level <= 0 and enemies_to_spawn == 0 and len(enemies) == 0 and len(spawn_group) == 0:
             if level_complete_time is None:
                 level_complete_time = now
-            # Ждем, пока завершатся анимации взрывов и пройдет 3 секунды
-            if now - level_complete_time >= 3000 and len(explosions) == 0:
+            if now - level_complete_time >= 3000:
                 next_level()
-        else:
-            # Если условия не выполняются, сбрасываем таймер завершения уровня
-            level_complete_time = None
         # Очищаем замороженный кадр, если он был использован ранее
         paused_frame = None
     else:
