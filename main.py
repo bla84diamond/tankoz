@@ -24,6 +24,11 @@ bonus_pos = (0, 0)  # Позиция бонуса
 bonus_blink = False  # Состояние мерцания бонуса
 last_bonus_blink = 0  # Время последнего мерцания
 enemy_counter = 0  # Счетчик появившихся врагов
+# Глобальные переменные для бонусов и эффекта остановки времени
+enemy_stop = False
+enemy_stop_end_time = 0
+score_life_20000_awarded = False
+score_life_100000_awarded = False
 
 # =========================
 # Константы размеров
@@ -68,6 +73,16 @@ def get_sprite(x, y, width, height):
     sprite = pygame.Surface((width, height), pygame.SRCALPHA)
     sprite.blit(spritesheet, (0, 0), (x, y, width, height))
     return sprite
+
+# Определение бонусов с их типами, спрайтами (размер 32x32) и весами (для случайного выбора)
+bonus_definitions = [
+    {"type": "armor",      "sprite": get_sprite(512, 222, 32, 32), "weight": 30},  # Высокая вероятность
+    {"type": "time_stop",  "sprite": get_sprite(544, 222, 32, 32), "weight": 30},  # Высокая вероятность
+    {"type": "hq_boost",   "sprite": get_sprite(576, 222, 32, 32), "weight": 20},  # Средняя вероятность
+    {"type": "tank_boost", "sprite": get_sprite(608, 222, 32, 32), "weight": 20},  # Средняя вероятность
+    {"type": "grenade",    "sprite": get_sprite(640, 222, 32, 32), "weight": 20},  # Средняя вероятность
+    {"type": "life",       "sprite": get_sprite(672, 222, 32, 32), "weight": 10}   # Низкая вероятность
+]
 
 # Спрайты для цифр (добавлено)
 number_sprites = {
@@ -266,16 +281,18 @@ class ScorePopup(pygame.sprite.Sprite):
 class Bonus(pygame.sprite.Sprite):
     def __init__(self, pos):
         super().__init__()
-        self.image = pygame.Surface((32, 32))
-        self.image.fill((150, 150, 150))
+        # Выбираем бонус с использованием random.choices по весам
+        self.bonus_data = random.choices(bonus_definitions, weights=[bd["weight"] for bd in bonus_definitions])[0]
+        self.type = self.bonus_data["type"]
+        self.image = self.bonus_data["sprite"]
         self.rect = self.image.get_rect(center=pos)
         self.spawn_time = pygame.time.get_ticks()
         all_sprites.add(self)
-        bonus_group.add(self)  # Добавляем в отдельную группу
-        bonus_channel.play(bonus_appear_sound)  # Звук появления
+        bonus_group.add(self)
+        bonus_channel.play(bonus_appear_sound)
 
     def update(self):
-        # Удаление бонуса через 10 секунд
+        # Удаляем бонус через 10 секунд
         if pygame.time.get_ticks() - self.spawn_time > 10000:
             self.kill()
 
@@ -630,7 +647,7 @@ class Enemy(Tank):
             self.destroy()
             return True
               
-    def destroy(self):
+    def destroy(self, no_score=False):
         global global_score, bonus_active
         if not self.is_alive:
             return
@@ -640,15 +657,17 @@ class Enemy(Tank):
         tank_group.remove(self)
         kill_sound.play()
 
-        # Создаём взрыв: передаём очки и duration = 250 мс для всплывающего спрайта
-        explosion = Explosion(self.rect.center, score_points=self.score_value, popup_duration=250)
+        # Если no_score == True, не показываем всплывающий спрайт очков
+        if no_score:
+            explosion = Explosion(self.rect.center, score_points=None, popup_duration=250)
+        else:
+            explosion = Explosion(self.rect.center, score_points=self.score_value, popup_duration=250)
         explosions.add(explosion)
         all_sprites.add(explosion)
 
-        # Начисляем очки
-        global_score += self.score_value
+        if not no_score:
+            global_score += self.score_value
 
-        # Уменьшаем счётчик врагов
         global enemies_remaining_level
         enemies_remaining_level -= 1
 
@@ -664,6 +683,13 @@ class Enemy(Tank):
             bonus_active = True
 
     def ai_update(self):
+        global enemy_stop, enemy_stop_end_time
+        if enemy_stop:
+            # Если время остановки еще не истекло, пропускаем обновление для этого врага
+            if pygame.time.get_ticks() < enemy_stop_end_time:
+                return
+            else:
+                enemy_stop = False  # Сброс эффекта после истечения времени
         # Мерцание специальных танков
         if self.is_special and self.is_alive:
             now = pygame.time.get_ticks()
@@ -844,6 +870,21 @@ def spawn_player_callback(pos):
     all_sprites.add(player)
     tank_group.add(player)
 
+def can_spawn_at(pos):
+    # Создаем прямоугольник, центр которого в pos, размер 32x32
+    temp_rect = pygame.Rect(pos[0] - 16, pos[1] - 16, 32, 32)
+    # Если прямоугольник пересекается с прямоугольником любого танка — спавн невозможен
+    return not any(tank.rect.colliderect(temp_rect) for tank in tank_group)
+
+def get_available_spawn_cell():
+    # Перебираем ячейки в случайном порядке
+    free_positions = [pos for pos in spawn_positions if not spawn_occupancy[pos]]
+    random.shuffle(free_positions)
+    for pos in free_positions:
+        if can_spawn_at(pos):
+            return pos
+    return None
+
 # =========================
 # Функция обратного вызова для появления врага
 # =========================
@@ -866,26 +907,43 @@ def spawn_enemy_callback(pos):
         enemy_type = random.choice([1, 2, 3, 4])
     else:
         enemy_type = 4 if random.random() < 0.3 else random.choice([1, 2, 3])
-    #print(f"Спавн врага: тип={enemy_type}, координаты={pos}")
-    # Создание танка
+    
+    # Создаём временного врага (пока не добавляем в группы).
     if enemy_type == 4:
         armor_level = random.randint(1, 3)
-        enemy = Enemy(pos[0], pos[1], initial_direction, enemy_type=4, armor_level=armor_level)
+        temp_enemy = Enemy(pos[0], pos[1], initial_direction, enemy_type=4, armor_level=armor_level)
     else:
-        enemy = Enemy(pos[0], pos[1], initial_direction, enemy_type=enemy_type)
+        temp_enemy = Enemy(pos[0], pos[1], initial_direction, enemy_type=enemy_type)
 
+    # Проверяем, не столкнётся ли он с уже существующими танками (включая игрока)
+    collided = False
+    for t in tank_group:
+        if t.rect.colliderect(temp_enemy.rect):
+            collided = True
+            break
+    
+    # Если коллизия есть — НЕ спавним
+    if collided:
+        temp_enemy.kill()  # удаляем временный объект
+        # Освобождаем спавн-позицию
+        spawn_occupancy[pos] = False
+        return
+
+    # Если коллизий нет – спавним официально
     # Если враг special -> уничтожаем предыдущий бонус
-    if enemy.is_special:
+    if temp_enemy.is_special:
         for b in bonus_group:
             b.kill()
         bonus_active = False
 
-    # Настройка скорости пуль
+    # Настройка скорости пуль у «скорострельного» танка
     if enemy_type == 3:
-        enemy.bullet_speed = 14
-    enemies.add(enemy)
-    all_sprites.add(enemy)
-    tank_group.add(enemy)
+        temp_enemy.bullet_speed = 14
+
+    enemies.add(temp_enemy)
+    tank_group.add(temp_enemy)
+    all_sprites.add(temp_enemy)
+
     enemies_to_spawn -= 1
     update_grid_after_spawn()
     spawn_occupancy[pos] = False
@@ -1180,15 +1238,12 @@ while True:
         now = pygame.time.get_ticks()
         # Спавн врагов
         if now >= next_spawn_time and (len(enemies) + len(spawn_group)) < 4 and enemies_to_spawn > 0:
-            available_positions = [pos for pos in spawn_positions if not spawn_occupancy[pos]]
-            
-            if available_positions:
-                chosen_pos = random.choice(available_positions)
+            chosen_pos = get_available_spawn_cell()
+            if chosen_pos is not None:
                 spawn_occupancy[chosen_pos] = True
                 spawn_anim = SpawnAnimation(chosen_pos, spawn_enemy_callback)
                 spawn_group.add(spawn_anim)
                 all_sprites.add(spawn_anim)
-            
             next_spawn_time = now + random.randint(1000, 7000)
 
         # Получаем состояние клавиатуры
@@ -1247,12 +1302,33 @@ while True:
         if player is not None:
             bonus_hit = pygame.sprite.spritecollide(player, bonus_group, True)
             for bonus in bonus_hit:
-                global_score += 500
-                bonus_active = False
                 bonus_channel.play(bonus_take_sound)
-                # Создаём всплывающий спрайт на 500 очков
-                score_popup = ScorePopup(bonus.rect.center, 500)
-                popups.add(score_popup)
+                if bonus.type == "armor":
+                    # Включаем щит на 10 секунд, если он сейчас не активен
+                    if not hasattr(player, "shield_active") or not player.shield_active:
+                        player.shield_active = True
+                        player.shield_start = pygame.time.get_ticks()
+                        shield_end_time = pygame.time.get_ticks() + 10000
+                elif bonus.type == "time_stop":
+                    # Останавливаем движение и стрельбу всех врагов на 10 секунд
+                    enemy_stop = True
+                    enemy_stop_end_time = pygame.time.get_ticks() + 10000
+                elif bonus.type == "hq_boost":
+                    # Заглушка для усиления штаба (будет дополнено)
+                    print("Усиление штаба активировано (заглушка)")
+                elif bonus.type == "tank_boost":
+                    # Заглушка для усиления танка (будет дополнено)
+                    print("Усиление танка активировано (заглушка)")
+                elif bonus.type == "grenade":
+                    # Взрываем все вражеские танки на экране (без начисления очков)
+                    for enemy in list(enemies):
+                        enemy.destroy(no_score=True)
+                elif bonus.type == "life":
+                    # Добавляем одну жизнь игроку
+                    player_lives += 1
+                    # Можно также показать всплывающую подсказку
+                    score_popup = ScorePopup(bonus.rect.center, 0)
+                    popups.add(score_popup)
         # Если игрок сталкивается с пулями врагов и защитное поле не активно – уничтожаем игрока
         if player is not None:
             player_hits = pygame.sprite.spritecollide(player, enemy_bullets, True)
@@ -1341,7 +1417,14 @@ while True:
         score_x = WINDOW_WIDTH // 2 - (len(score_digits) * 8)  # Центрирование
         score_y = TOP_MARGIN // 2 - 8
         for i, digit in enumerate(score_digits):
-            screen.blit(digit, (score_x + i*16, score_y))       
+            screen.blit(digit, (score_x + i*16, score_y))
+        if global_score >= 20000 and not score_life_20000_awarded:
+            player_lives += 1
+            score_life_20000_awarded = True
+
+        if global_score >= 100000 and not score_life_100000_awarded:
+            player_lives += 1
+            score_life_100000_awarded = True    
         # Если уровень окончен (все 20 врагов убиты)
         if enemies_remaining_level <= 0 and enemies_to_spawn == 0 and len(enemies) == 0 and len(spawn_group) == 0:
             if level_complete_time is None:
