@@ -88,11 +88,13 @@ level_icon_sprite = get_sprite(752, 368, 32, 32)  # Спрайт иконки у
 
 # Функция для рендеринга цифр уровня
 def render_level_number(level):
+    # Если уровень однозначный, возвращаем 1 спрайт
     if level < 10:
-        return [number_sprites[0], number_sprites[level]]
+        return [number_sprites[level]]
     else:
         digits = [int(d) for d in str(level)]
         return [number_sprites[d] for d in digits]
+
 
 # Преобразует число в список спрайтов его цифр.
 def render_number(number):
@@ -143,6 +145,31 @@ enemy_sprites = {
     }
 }
 
+heavy_tank_base_sprites = {
+    "up":    [get_sprite(256, 224, 32, 32), get_sprite(288, 224, 32, 32)],
+    "left":  [get_sprite(320, 224, 32, 32), get_sprite(352, 224, 32, 32)],
+    "down":  [get_sprite(384, 224, 32, 32), get_sprite(416, 224, 32, 32)],
+    "right": [get_sprite(448, 224, 32, 32), get_sprite(480, 224, 32, 32)]
+}
+
+ARMOR_COLORS = {
+    3: [
+        (50, 100, 50),    # 1) Темно-зеленый  (health=4)
+        (200, 200, 100),  # 2) Желтый         (health=3)
+        (100, 200, 100),  # 3) Светло-зеленый (health=2)
+        (255, 255, 255)   # 4) Обычный (белый) (health=1)
+    ],
+    2: [
+        (200, 200, 100),  # Желтый         (health=3)
+        (100, 200, 100),  # Светло-зеленый (health=2)
+        (255, 255, 255)   # Обычный        (health=1)
+    ],
+    1: [
+        (100, 200, 100),  # Светло-зеленый (health=2)
+        (255, 255, 255)   # Обычный        (health=1)
+    ]
+}
+
 bullet_sprites = {
     "up": get_sprite(645, 204, 8, 8),
     "left": get_sprite(660, 203, 8, 8),
@@ -188,6 +215,10 @@ shoot_sound = pygame.mixer.Sound("sounds/shoot.ogg")
 pause_sound = pygame.mixer.Sound("sounds/pause.ogg")
 start_sound = pygame.mixer.Sound("sounds/start.ogg")
 wall_sound = pygame.mixer.Sound("sounds/wall.ogg")
+minus_armor_sound = pygame.mixer.Sound("sounds/minus_armor.ogg")
+bonus_appear_sound = pygame.mixer.Sound("sounds/bonus_appears.ogg")
+bonus_take_sound = pygame.mixer.Sound("sounds/bonus_take.ogg")
+bonus_channel = pygame.mixer.Channel(1)  # Отдельный канал для бонусов
 current_player_sound = None  # звук "stand" не запускается, пока игрок не двигается
 
 # =========================
@@ -214,6 +245,7 @@ class Bonus(pygame.sprite.Sprite):
         self.spawn_time = pygame.time.get_ticks()
         all_sprites.add(self)
         bonus_group.add(self)  # Добавляем в отдельную группу
+        bonus_channel.play(bonus_appear_sound)  # Звук появления
 
     def update(self):
         # Удаление бонуса через 10 секунд
@@ -477,16 +509,35 @@ class Enemy(Tank):
         self.blink_state = False
         self.last_blink = 0
     def _update_color(self):
-        # Изменение цвета для тяжелых танков
-        colors = {
-            1: (100, 200, 100),   # Светло-зеленый
-            2: (200, 200, 100),   # Желтый
-            3: (50, 100, 50)      # Темно-зеленый
-        }
         if self.enemy_type == 4:
-            color = colors.get(self.armor_level, (255, 255, 255))
-            for frame in self.sprites[self.direction]:
-                frame.fill(color, special_flags=pygame.BLEND_RGB_MULT)
+            # Получаем список цветов для этого armor_level
+            if self.armor_level not in ARMOR_COLORS:
+                return  # или вернуть белый цвет по умолчанию
+            
+            colors_list = ARMOR_COLORS[self.armor_level]
+            
+            # Индекс в зависимости от (max_health - current_health)
+            index = self.max_health - self.health
+            if index < 0: index = 0
+            if index >= len(colors_list):
+                index = len(colors_list) - 1  # защита
+            color = colors_list[index]
+
+            # Для всех направлений заново берем "базовые" кадры и перекрашиваем один раз
+            for direction in ["up", "down", "left", "right"]:
+                new_frames = []
+                base_frames = heavy_tank_base_sprites[direction]  # берём «чистые»
+                for bf in base_frames:
+                    frame_copy = bf.copy()
+                    # Накладываем выбранный цвет
+                    frame_copy.fill(color, special_flags=pygame.BLEND_RGB_MULT)
+                    new_frames.append(frame_copy)
+                # Обновляем в self.sprites
+                self.sprites[direction] = new_frames
+
+            # Устанавливаем текущую картинку заново (чтобы мгновенно изменился цвет)
+            self.image = self.sprites[self.direction][self.current_sprite]
+
     
     def take_damage(self):
         global bonus_active
@@ -494,20 +545,21 @@ class Enemy(Tank):
             self.health -= 1
             # Спавн бонуса при первом попадании в специальный танк
             if self.is_special and self.health == self.max_health - 1:
-            # Генерируем позицию бонуса в случайной клетке, исключая края
-                cols = GRID_COLS - 2  # Исключаем первый и последний столбец
-                rows = GRID_ROWS - 2  # Исключаем первую и последнюю строку
+                cols = GRID_COLS - 2
+                rows = GRID_ROWS - 2
                 rand_col = random.randint(1, cols)
                 rand_row = random.randint(1, rows)
                 bonus_x = LEFT_MARGIN + (rand_col * CELL_SIZE) - CELL_SIZE//2
                 bonus_y = TOP_MARGIN + (rand_row * CELL_SIZE) - CELL_SIZE//2
                 bonus = Bonus((bonus_x, bonus_y))
                 bonus_active = True
+                self.is_special = False  # <--- ВАЖНО
 
             if self.health <= 0:
                 self.destroy()
                 return True
             else:
+                minus_armor_sound.play()
                 self._update_color()
                 return False
         else:
@@ -524,7 +576,7 @@ class Enemy(Tank):
         global enemies_remaining_level
         enemies_remaining_level -= 1
         # Спавн бонуса только для специальных танков
-        if self.is_special:
+        if self.is_special and self.enemy_type != 4:
             # Генерируем позицию бонуса в случайной клетке, исключая края
             cols = GRID_COLS - 2  # Исключаем первый и последний столбец
             rows = GRID_ROWS - 2  # Исключаем первую и последнюю строку
@@ -685,17 +737,19 @@ def reset_grid():
     grid_status = [True] * 20
 
 def next_level():
-    global player, current_level, enemies_to_spawn, enemies_remaining_level, player_respawn_time
+    global player, current_player_sound, current_level, enemies_to_spawn, enemies_remaining_level, enemy_counter, player_respawn_time, level_complete_time
     player_sound_channel.stop()
     current_player_sound = None
     if player is not None:
         player.kill()
     player = None
     current_level += 1
+    level_complete_time = None
     # После убийства всех врагов уровня, переходим на следующий уровень
     level_transition(current_level)
     enemies_to_spawn = 20
     enemies_remaining_level = 20
+    enemy_counter = 0
     reset_grid()
     # Удаляем все оставшиеся вражеские спрайты, если таковые остались
     for enemy in list(enemies):
@@ -718,7 +772,7 @@ def spawn_player_callback(pos):
 # Функция обратного вызова для появления врага
 # =========================
 def spawn_enemy_callback(pos):
-    global enemies_to_spawn, enemy_counter
+    global enemies_to_spawn, enemy_counter, bonus_active
     
     allowed = ["down", "right"]
     if pos[0] == LEFT_MARGIN + 12 * CELL_SIZE + 16:
@@ -743,7 +797,13 @@ def spawn_enemy_callback(pos):
         enemy = Enemy(pos[0], pos[1], initial_direction, enemy_type=4, armor_level=armor_level)
     else:
         enemy = Enemy(pos[0], pos[1], initial_direction, enemy_type=enemy_type)
-    
+
+    # Если враг special -> уничтожаем предыдущий бонус
+    if enemy.is_special:
+        for b in bonus_group:
+            b.kill()
+        bonus_active = False
+
     # Настройка скорости пуль
     if enemy_type == 3:
         enemy.bullet_speed = 14
@@ -808,10 +868,10 @@ def level_transition(level):
     
     # Рисуем надпись только в игровой зоне
     stage_surface.blit(stage_text_sprite, (start_x, start_y))
-    digit_x = start_x + 80 + 16
+    digit_x = start_x + 80  # Начинаем сразу после надписи STAGE
     for digit_sprite in level_digits:
-        stage_surface.blit(digit_sprite, (digit_x, start_y))
         digit_x += 16
+        stage_surface.blit(digit_sprite, (digit_x, start_y))
     
     screen.blit(stage_surface, (0, 0))
     pygame.display.flip()
@@ -1104,6 +1164,7 @@ while True:
             for bonus in bonus_hit:
                 global_score += 500
                 bonus_active = False
+                bonus_channel.play(bonus_take_sound)  # Звук взятия
         # Если игрок сталкивается с пулями врагов и защитное поле не активно – уничтожаем игрока
         if player is not None:
             player_hits = pygame.sprite.spritecollide(player, enemy_bullets, True)
@@ -1174,9 +1235,13 @@ while True:
             screen.blit(number_sprites[0], (512, 288))  # fallback
         screen.blit(level_icon_sprite, (496, 368))  # Иконка уровня
         level_digits = render_level_number(current_level)
-        if len(level_digits) >= 2:
-            screen.blit(level_digits[0], (496, 400))  # Первая цифра
-            screen.blit(level_digits[1], (512, 400))  # Вторая цифра
+        if len(level_digits) == 1:
+            # Если одна цифра (уровень 1..9), рисуем в x=512
+            screen.blit(level_digits[0], (512, 400))
+        elif len(level_digits) == 2:
+            # Если две цифры (уровень 10..99), десятки в x=496, единицы в x=512
+            screen.blit(level_digits[0], (496, 400))
+            screen.blit(level_digits[1], (512, 400))
         # Счет
         score_digits = render_number(global_score)
         score_x = WINDOW_WIDTH // 2 - (len(score_digits) * 8)  # Центрирование
