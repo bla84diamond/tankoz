@@ -167,6 +167,33 @@ heavy_tank_base_sprites = {
     "right": [get_sprite(448, 224, 32, 32), get_sprite(480, 224, 32, 32)]
 }
 
+bonus_enemy_sprites = {
+    1: {
+        "up": [get_sprite(256, 128+256, 32, 32), get_sprite(288, 128+256, 32, 32)],
+        "left": [get_sprite(320, 128+256, 32, 32), get_sprite(352, 128+256, 32, 32)],
+        "down": [get_sprite(384, 128+256, 32, 32), get_sprite(416, 128+256, 32, 32)],
+        "right": [get_sprite(448, 128+256, 32, 32), get_sprite(480, 128+256, 32, 32)]
+    },
+    2: {
+        "up": [get_sprite(256, 160+256, 32, 32), get_sprite(288, 160+256, 32, 32)],
+        "left": [get_sprite(320, 160+256, 32, 32), get_sprite(352, 160+256, 32, 32)],
+        "down": [get_sprite(384, 160+256, 32, 32), get_sprite(416, 160+256, 32, 32)],
+        "right": [get_sprite(448, 160+256, 32, 32), get_sprite(480, 160+256, 32, 32)]
+    },
+    3: {
+        "up": [get_sprite(256, 192+256, 32, 32), get_sprite(288, 192+256, 32, 32)],
+        "left": [get_sprite(320, 192+256, 32, 32), get_sprite(352, 192+256, 32, 32)],
+        "down": [get_sprite(384, 192+256, 32, 32), get_sprite(416, 192+256, 32, 32)],
+        "right": [get_sprite(448, 192+256, 32, 32), get_sprite(480, 192+256, 32, 32)]
+    },
+    4: {
+        "up": [get_sprite(256, 224+256, 32, 32), get_sprite(288, 224+256, 32, 32)],
+        "left": [get_sprite(320, 224+256, 32, 32), get_sprite(352, 224+256, 32, 32)],
+        "down": [get_sprite(384, 224+256, 32, 32), get_sprite(416, 224+256, 32, 32)],
+        "right": [get_sprite(448, 224+256, 32, 32), get_sprite(480, 224+256, 32, 32)]
+    }
+}
+
 ARMOR_COLORS = {
     3: [
         (50, 100, 50),    # 1) Темно-зеленый  (health=4)
@@ -242,6 +269,7 @@ wall_sound = pygame.mixer.Sound("sounds/wall.ogg")
 minus_armor_sound = pygame.mixer.Sound("sounds/minus_armor.ogg")
 bonus_appear_sound = pygame.mixer.Sound("sounds/bonus_appears.ogg")
 bonus_take_sound = pygame.mixer.Sound("sounds/bonus_take.ogg")
+bonus_life_sound = pygame.mixer.Sound("sounds/bonus_life.ogg")
 bonus_channel = pygame.mixer.Channel(1)  # Отдельный канал для бонусов
 current_player_sound = None  # звук "stand" не запускается, пока игрок не двигается
 
@@ -690,18 +718,8 @@ class Enemy(Tank):
                 return
             else:
                 enemy_stop = False  # Сброс эффекта после истечения времени
-        # Мерцание специальных танков
-        if self.is_special and self.is_alive:
-            now = pygame.time.get_ticks()
-            if now - self.last_blink > 200:
-                self.blink_state = not self.blink_state
-                self.last_blink = now
-                if self.blink_state:
-                    self.image.fill((255, 0, 0), special_flags=pygame.BLEND_RGB_ADD)
-                else:
-                    self.image = self.sprites[self.direction][self.current_sprite]
-        if not self.is_alive:
-            return
+
+        # Обновление направления и движения
         old_rect = self.rect.copy()
         now = pygame.time.get_ticks()
         if now >= self.change_direction_time:
@@ -724,7 +742,21 @@ class Enemy(Tank):
                 self.direction = random.choice(["up", "down", "left", "right"])
                 break
         self.rect.clamp_ip(FIELD_RECT)
+
+        # Выполняем анимацию (обновляет self.current_sprite и self.image)
         self._animate()
+
+        # Если танк специальный (бонусный), переключаем спрайт с использованием бонусных спрайтов
+        if self.is_special and self.is_alive:
+            now = pygame.time.get_ticks()
+            if now - self.last_blink > 200:
+                self.blink_state = not self.blink_state
+                self.last_blink = now
+            if self.blink_state:
+                self.image = bonus_enemy_sprites[self.enemy_type][self.direction][self.current_sprite]
+            else:
+                self.image = self.sprites[self.direction][self.current_sprite]
+
         if random.random() < 0.02:
             self.shoot()
 
@@ -1302,33 +1334,43 @@ while True:
         if player is not None:
             bonus_hit = pygame.sprite.spritecollide(player, bonus_group, True)
             for bonus in bonus_hit:
-                bonus_channel.play(bonus_take_sound)
+                # За взятие любого бонуса начисляем 500 очков
+                global_score += 500
+
+                # Обработка бонуса в зависимости от его типа
                 if bonus.type == "armor":
-                    # Включаем щит на 10 секунд, если он сейчас не активен
-                    if not hasattr(player, "shield_active") or not player.shield_active:
-                        player.shield_active = True
-                        player.shield_start = pygame.time.get_ticks()
-                        shield_end_time = pygame.time.get_ticks() + 10000
+                    # Включаем щит на 10 секунд (сбрасываем флаг бесконечного щита)
+                    player.shield_active = True
+                    player.shield_start = pygame.time.get_ticks()
+                    shield_end_time = pygame.time.get_ticks() + 10000  # 10 секунд
+                    player.shield_unlimited = False
+                    bonus_channel.play(bonus_take_sound)
                 elif bonus.type == "time_stop":
-                    # Останавливаем движение и стрельбу всех врагов на 10 секунд
+                    # Останавливаем движение и стрельбу врагов на 10 секунд
                     enemy_stop = True
                     enemy_stop_end_time = pygame.time.get_ticks() + 10000
+                    bonus_channel.play(bonus_take_sound)
                 elif bonus.type == "hq_boost":
-                    # Заглушка для усиления штаба (будет дополнено)
+                    # Заглушка для усиления штаба
                     print("Усиление штаба активировано (заглушка)")
+                    bonus_channel.play(bonus_take_sound)
                 elif bonus.type == "tank_boost":
-                    # Заглушка для усиления танка (будет дополнено)
+                    # Заглушка для усиления танка
                     print("Усиление танка активировано (заглушка)")
+                    bonus_channel.play(bonus_take_sound)
                 elif bonus.type == "grenade":
-                    # Взрываем все вражеские танки на экране (без начисления очков)
+                    # Взрываем все вражеские танки (без начисления дополнительных очков)
                     for enemy in list(enemies):
                         enemy.destroy(no_score=True)
+                    bonus_channel.play(bonus_take_sound)
                 elif bonus.type == "life":
                     # Добавляем одну жизнь игроку
                     player_lives += 1
-                    # Можно также показать всплывающую подсказку
-                    score_popup = ScorePopup(bonus.rect.center, 0)
-                    popups.add(score_popup)
+                    bonus_channel.play(bonus_life_sound)
+                
+                # Создаём всплывающий спрайт с 500 очками
+                score_popup = ScorePopup(bonus.rect.center, 500)
+                popups.add(score_popup)
         # Если игрок сталкивается с пулями врагов и защитное поле не активно – уничтожаем игрока
         if player is not None:
             player_hits = pygame.sprite.spritecollide(player, enemy_bullets, True)
@@ -1420,10 +1462,12 @@ while True:
             screen.blit(digit, (score_x + i*16, score_y))
         if global_score >= 20000 and not score_life_20000_awarded:
             player_lives += 1
+            bonus_channel.play(bonus_life_sound)  # проигрываем звук bonus_life.ogg
             score_life_20000_awarded = True
 
         if global_score >= 100000 and not score_life_100000_awarded:
             player_lives += 1
+            bonus_channel.play(bonus_life_sound)  # проигрываем звук bonus_life.ogg
             score_life_100000_awarded = True    
         # Если уровень окончен (все 20 врагов убиты)
         if enemies_remaining_level <= 0 and enemies_to_spawn == 0 and len(enemies) == 0 and len(spawn_group) == 0:
