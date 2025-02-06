@@ -187,6 +187,15 @@ shield_sprites = [
     get_sprite(544, 288, 32, 32)
 ]
 
+# Спрайты для отображения очков (32x16)
+score_points_sprites = {
+    100: get_sprite(576, 327, 32, 16),
+    200: get_sprite(608, 327, 32, 16),
+    300: get_sprite(640, 327, 32, 16),
+    400: get_sprite(672, 327, 32, 16),
+    500: get_sprite(704, 327, 32, 16),
+}
+
 # Для сетки оставшихся врагов (ячейки 16x16)
 present_sprite = get_sprite(640, 384, 16, 16)
 absent_sprite = get_sprite(736, 400, 16, 16)
@@ -232,6 +241,24 @@ explosions = pygame.sprite.Group()       # анимация взрыва
 player_bullets = pygame.sprite.Group()   # пули игрока
 enemy_bullets = pygame.sprite.Group()    # пули врагов
 bonus_group = pygame.sprite.Group()
+popups = pygame.sprite.Group()
+
+# =========================
+# Класс отобрвжения очков
+# =========================
+class ScorePopup(pygame.sprite.Sprite):
+    def __init__(self, pos, points, duration=500):
+        super().__init__()
+        self.image = score_points_sprites[points]  # Берёт нужный спрайт из словаря
+        self.rect = self.image.get_rect(center=pos)
+        self.start_time = pygame.time.get_ticks()
+        # duration теперь задаётся извне (по умолчанию 500 мс)
+        self.duration = duration
+
+    def update(self):
+        now = pygame.time.get_ticks()
+        if now - self.start_time > self.duration:
+            self.kill()
 
 # =========================
 # Класс Bonus
@@ -253,17 +280,18 @@ class Bonus(pygame.sprite.Sprite):
             self.kill()
 
 # =========================
-# Класс для взрыва при попадании в стену
+# Класс для взрыва при попадании
 # =========================
-class WallExplosion(pygame.sprite.Sprite):
+class HitExplosion(pygame.sprite.Sprite):
     def __init__(self, pos):
         super().__init__()
+        # Можно оставить разброс ±3 пикс., как было, чтобы "вспышка" выглядела рандомно
         self.pos = (pos[0] + random.randint(-3, 3), pos[1] + random.randint(-3, 3))
         frame0 = get_sprite(511, 256, 32, 32)
         frame1 = get_sprite(544, 256, 32, 32)
         self.frames = [frame0, frame1]
         self.total_frames = len(self.frames)
-        self.frame_duration = 50  # 50ms per frame
+        self.frame_duration = 50  # по 50 мс на кадр
         self.start_time = pygame.time.get_ticks()
         self.image = self.frames[0]
         self.rect = self.image.get_rect(center=self.pos)
@@ -281,7 +309,7 @@ class WallExplosion(pygame.sprite.Sprite):
 # Класс Explosion – анимация взрыва (5 кадров, 500 мс)
 # =========================
 class Explosion(pygame.sprite.Sprite):
-    def __init__(self, pos):
+    def __init__(self, pos, score_points=None, popup_duration=500):
         super().__init__()
         self.pos = pos
         frame0 = get_sprite(511, 256, 32, 32)
@@ -291,12 +319,16 @@ class Explosion(pygame.sprite.Sprite):
         frame4 = get_sprite(672, 256, 64, 64)
         self.frames = [frame0, frame1, frame2, frame3, frame4]
         self.total_frames = len(self.frames)
-        self.total_duration = 500  # мс
+        self.total_duration = 500  # длительность анимации взрыва
         self.frame_duration = self.total_duration / self.total_frames
         self.start_time = pygame.time.get_ticks()
         self.image = self.frames[0]
         self.rect = self.image.get_rect(center=self.pos)
-    
+
+        self.score_points = score_points
+        # Новое поле – продолжительность спрайта очков
+        self.popup_duration = popup_duration
+
     def update(self):
         now = pygame.time.get_ticks()
         elapsed = now - self.start_time
@@ -306,6 +338,10 @@ class Explosion(pygame.sprite.Sprite):
             self.rect = self.image.get_rect(center=self.pos)
         else:
             self.kill()
+            # Если нужно показать очки — создаём всплывающий спрайт
+            if self.score_points is not None:
+                popup = ScorePopup(self.pos, self.score_points, duration=self.popup_duration)
+                popups.add(popup)
 
 # =========================
 # Класс SpawnAnimation – анимация появления (для врагов)
@@ -347,6 +383,7 @@ class Tank(pygame.sprite.Sprite):
         self.is_player = is_player
         if is_player:
             self.sprites = player_sprites  # Для игрока можно использовать общий словарь
+            self.bullet_speed = 10
         else:
             if enemy_type is None:
                 enemy_type = 1
@@ -432,19 +469,46 @@ class Tank(pygame.sprite.Sprite):
         self.image = self.sprites[self.direction][self.current_sprite]
 
     def shoot(self):
-        # Проверяем количество активных пуль
-        active_bullets = len(player_bullets) if self.is_player else len(enemy_bullets)
-        if active_bullets == 0 and self.shoot_cooldown < pygame.time.get_ticks() and self.is_alive:
+        """Стрельба (общий метод)."""
+        if self.shoot_cooldown < pygame.time.get_ticks() and self.is_alive:
+            # Общие вычисления начальной позиции пули
+            if self.direction == "up":
+                bullet_x = self.rect.centerx
+                bullet_y = self.rect.top - 4
+            elif self.direction == "down":
+                bullet_x = self.rect.centerx
+                bullet_y = self.rect.bottom + 4
+            elif self.direction == "left":
+                bullet_x = self.rect.left - 4
+                bullet_y = self.rect.centery
+            else:  # self.direction == "right"
+                bullet_x = self.rect.right + 4
+                bullet_y = self.rect.centery
+
             if self.is_player:
-                shoot_sound.play()
-            bullet = Bullet(self.rect.centerx, self.rect.centery, self.direction,
-                            owner="player" if self.is_player else "enemy")
-            if self.is_player:
+                # Если это игрок
+                bullet = Bullet(
+                    bullet_x,
+                    bullet_y,
+                    self.direction,
+                    owner="player",
+                    speed=self.bullet_speed  # у Tank задано self.bullet_speed=10
+                )
                 player_bullets.add(bullet)
             else:
+                # Если это враг
+                bullet = Bullet(
+                    bullet_x,
+                    bullet_y,
+                    self.direction,
+                    owner="enemy",
+                    speed=self.bullet_speed
+                )
                 enemy_bullets.add(bullet)
+
             all_sprites.add(bullet)
             self.shoot_cooldown = pygame.time.get_ticks() + 500
+
 
     def destroy(self):
         if self.is_player:
@@ -492,8 +556,8 @@ class Enemy(Tank):
             self.bullet_speed = 6
             self.score_value = 200
         elif enemy_type == 3:  # Скорострельный танк
-            self.speed = 2
-            self.bullet_speed = 14
+            self.speed = 1
+            self.bullet_speed = 21
             self.score_value = 300
         elif enemy_type == 4:  # Тяжелый танк
             self.speed = 1
@@ -508,6 +572,7 @@ class Enemy(Tank):
         self.is_special = enemy_counter in [4, 11, 18]
         self.blink_state = False
         self.last_blink = 0
+    
     def _update_color(self):
         if self.enemy_type == 4:
             # Получаем список цветов для этого armor_level
@@ -537,7 +602,6 @@ class Enemy(Tank):
 
             # Устанавливаем текущую картинку заново (чтобы мгновенно изменился цвет)
             self.image = self.sprites[self.direction][self.current_sprite]
-
     
     def take_damage(self):
         global bonus_active
@@ -568,23 +632,35 @@ class Enemy(Tank):
               
     def destroy(self):
         global global_score, bonus_active
-        if not self.is_alive:  # Защита от повторного вызова
+        if not self.is_alive:
             return
-        Tank.destroy(self)
+
+        self.is_alive = False
+        self.kill()
+        tank_group.remove(self)
+        kill_sound.play()
+
+        # Создаём взрыв: передаём очки и duration = 250 мс для всплывающего спрайта
+        explosion = Explosion(self.rect.center, score_points=self.score_value, popup_duration=250)
+        explosions.add(explosion)
+        all_sprites.add(explosion)
+
+        # Начисляем очки
         global_score += self.score_value
-        # Уменьшаем счетчик оставшихся врагов уровня
+
+        # Уменьшаем счётчик врагов
         global enemies_remaining_level
         enemies_remaining_level -= 1
-        # Спавн бонуса только для специальных танков
+
+        # Если «специальный» танк – спавним бонус (без изменений)
         if self.is_special and self.enemy_type != 4:
-            # Генерируем позицию бонуса в случайной клетке, исключая края
-            cols = GRID_COLS - 2  # Исключаем первый и последний столбец
-            rows = GRID_ROWS - 2  # Исключаем первую и последнюю строку
+            cols = GRID_COLS - 2
+            rows = GRID_ROWS - 2
             rand_col = random.randint(1, cols)
             rand_row = random.randint(1, rows)
-            bonus_x = LEFT_MARGIN + (rand_col * CELL_SIZE) - CELL_SIZE//2
-            bonus_y = TOP_MARGIN + (rand_row * CELL_SIZE) - CELL_SIZE//2
-            bonus = Bonus((bonus_x, bonus_y))
+            bonus_x = LEFT_MARGIN + (rand_col * CELL_SIZE) - CELL_SIZE // 2
+            bonus_y = TOP_MARGIN + (rand_row * CELL_SIZE) - CELL_SIZE // 2
+            Bonus((bonus_x, bonus_y))
             bonus_active = True
 
     def ai_update(self):
@@ -673,7 +749,7 @@ class Bullet(pygame.sprite.Sprite):
             # Исправление: звук от столкновения со стеной проигрываем ТОЛЬКО если пуля принадлежит игроку
             if self.owner == "player":
                 wall_sound.play()
-            explosion = WallExplosion(old_pos)
+            explosion = HitExplosion(old_pos)
             explosions.add(explosion)
             all_sprites.add(explosion)
             self.kill()
@@ -790,7 +866,7 @@ def spawn_enemy_callback(pos):
         enemy_type = random.choice([1, 2, 3, 4])
     else:
         enemy_type = 4 if random.random() < 0.3 else random.choice([1, 2, 3])
-    print(f"Спавн врага: тип={enemy_type}, координаты={pos}")
+    #print(f"Спавн врага: тип={enemy_type}, координаты={pos}")
     # Создание танка
     if enemy_type == 4:
         armor_level = random.randint(1, 3)
@@ -819,9 +895,9 @@ def spawn_enemy_callback(pos):
 # =========================
 def level_transition(level):
     start_sound.play()
-    if level > 1 :
+    if level > 1:
         final_surface = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
-        final_surface.fill((99, 99,99))  # Черные отступы
+        final_surface.fill((99, 99, 99))  # затемнённые отступы
         pygame.draw.rect(final_surface, (0, 0, 0), FIELD_RECT)
 
     # 0. Очистка всех спрайтов
@@ -834,8 +910,10 @@ def level_transition(level):
     player_bullets.empty()
     enemy_bullets.empty()
 
-    # 1. Фаза: Заполнение всего экрана серым с анимацией сверху и снизу
-    anim_duration = 1200
+    #
+    # --- Сокращение анимации закрытия до 600 мс (было 1200) ---
+    #
+    anim_duration = 600
     start_anim = pygame.time.get_ticks()
     
     while True:
@@ -847,74 +925,75 @@ def level_transition(level):
         ratio = elapsed / anim_duration
         fill_height = int((WINDOW_HEIGHT // 2) * ratio)
         
-        # Рисуем серые полосы на всем экране
         screen.fill((0, 0, 0))
-        pygame.draw.rect(screen, (99,99,99), (0, 0, WINDOW_WIDTH, fill_height))
-        pygame.draw.rect(screen, (99,99,99), 
-                        (0, WINDOW_HEIGHT - fill_height, WINDOW_WIDTH, fill_height))
+        pygame.draw.rect(screen, (99, 99, 99), (0, 0, WINDOW_WIDTH, fill_height))
+        pygame.draw.rect(
+            screen, (99, 99, 99),
+            (0, WINDOW_HEIGHT - fill_height, WINDOW_WIDTH, fill_height)
+        )
         
         pygame.display.flip()
         pygame.time.delay(16)
 
-    # 2. Фаза: Отображение Stage в центре игрового поля
+    # 1. Рисуем надпись STAGE + номер уровня на центре игрового поля
     level_digits = render_level_number(level)
-    total_width = 80 + 16 + (16 * len(level_digits))
+    total_width = 80 + 16 + (16 * len(level_digits))  # 80 — ширина спрайта "STAGE", небольшой зазор + цифры
     start_x = FIELD_RECT.left + (FIELD_RECT.width - total_width) // 2
     start_y = FIELD_RECT.top + (FIELD_RECT.height - 14) // 2
     
-    # Создаем поверхность с серым фоном
     stage_surface = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
     stage_surface.fill((99, 99, 99))
-    
-    # Рисуем надпись только в игровой зоне
     stage_surface.blit(stage_text_sprite, (start_x, start_y))
-    digit_x = start_x + 80  # Начинаем сразу после надписи STAGE
+
+    #
+    # --- Для выравнивания по центру спрайта "STAGE":
+    #     Спрайт "STAGE" высотой 14 px, цифры – 16 px, поэтому сместим их на -1 по вертикали
+    #
+    digit_x = start_x + 80  # справа от "STAGE"
+    digit_y = start_y - 1   # чуть выше для центрирования
     for digit_sprite in level_digits:
         digit_x += 16
-        stage_surface.blit(digit_sprite, (digit_x, start_y))
+        stage_surface.blit(digit_sprite, (digit_x, digit_y))
     
     screen.blit(stage_surface, (0, 0))
     pygame.display.flip()
-    
-    # Ожидание звука
+
+    # Ждём завершения звука
     while pygame.mixer.get_busy():
         pygame.time.wait(50)
 
-    # 3. Фаза: Раскрытие игровой зоны с сохранением отступов
-    anim_duration = 1000
+    #
+    # --- Ускоряем раскрытие экрана в 2 раза (1000 → 500) ---
+    #
+    anim_duration = 500
     start_anim = pygame.time.get_ticks()
-    
-    # Создаем маску для игровой зоны
+
+    # Готовим финальный кадр
     mask_surface = pygame.Surface((FIELD_RECT.size), pygame.SRCALPHA)
-    
-    # Финальный кадр с отступами
     final_surface = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
-    final_surface.fill((99, 99,99))  # Черные отступы
-    pygame.draw.rect(final_surface, (0, 0, 0), FIELD_RECT)  # Черное игровое поле
-    
+    final_surface.fill((99, 99, 99))
+    pygame.draw.rect(final_surface, (0, 0, 0), FIELD_RECT)
+
     while True:
         now = pygame.time.get_ticks()
         elapsed = now - start_anim
         if elapsed > anim_duration:
             break
-            
+
         ratio = elapsed / anim_duration
         current_height = int((FIELD_RECT.height // 2) * (1 - ratio))
-        
-        # Рисуем маску на игровом поле
-        mask_surface.fill((99,99,99))
-        pygame.draw.rect(mask_surface, (0,0,0,0), 
-                        (0, current_height, 
-                         FIELD_RECT.width, 
-                         FIELD_RECT.height - 2*current_height))
-        
-        # Собираем итоговое изображение
+
+        mask_surface.fill((99, 99, 99))
+        pygame.draw.rect(
+            mask_surface, (0, 0, 0, 0),
+            (0, current_height, FIELD_RECT.width, FIELD_RECT.height - 2 * current_height)
+        )
+
         screen.blit(final_surface, (0, 0))
         screen.blit(mask_surface, FIELD_RECT.topleft)
         pygame.display.flip()
         pygame.time.delay(16)
 
-    # Финальный кадр
     screen.blit(final_surface, (0, 0))
     pygame.display.flip()
 
@@ -1148,10 +1227,16 @@ while True:
             enemy.ai_update()
         spawn_group.update()
         explosions.update()
+        popups.update()
 
         pygame.sprite.groupcollide(player_bullets, enemy_bullets, True, True)
         hits = pygame.sprite.groupcollide(player_bullets, enemies, True, False)
         for bullet, hit_enemies in hits.items():
+            # Новое: создаём короткую вспышку в месте попадания
+            explosion = HitExplosion(bullet.rect.center)
+            explosions.add(explosion)
+            all_sprites.add(explosion)
+
             for enemy in hit_enemies:
                 if enemy.is_alive:
                     destroyed = enemy.take_damage()
@@ -1164,11 +1249,19 @@ while True:
             for bonus in bonus_hit:
                 global_score += 500
                 bonus_active = False
-                bonus_channel.play(bonus_take_sound)  # Звук взятия
+                bonus_channel.play(bonus_take_sound)
+                # Создаём всплывающий спрайт на 500 очков
+                score_popup = ScorePopup(bonus.rect.center, 500)
+                popups.add(score_popup)
         # Если игрок сталкивается с пулями врагов и защитное поле не активно – уничтожаем игрока
         if player is not None:
             player_hits = pygame.sprite.spritecollide(player, enemy_bullets, True)
             if player_hits and (not hasattr(player, "shield_active") or not player.shield_active):
+                # Для каждой пули, попавшей в игрока
+                for bullet in player_hits:
+                    explosion = HitExplosion(bullet.rect.center)  # Берём позицию конкретной пули
+                    explosions.add(explosion)
+                    all_sprites.add(explosion)
                 player.destroy()
                 player_respawn_time = now + 3000
                 player = None
@@ -1216,6 +1309,7 @@ while True:
             elapsed_shield = pygame.time.get_ticks() - player.shield_start
             shield_frame = (elapsed_shield // 20) % 2
             game_surface.blit(shield_sprites[shield_frame], player.rect.topleft)
+        popups.draw(game_surface)
         screen.fill((0, 0, 0))
         screen.blit(game_surface, (0, 0))
         # Рисуем на боковой панели (относительно окна) сетку оставшихся врагов
