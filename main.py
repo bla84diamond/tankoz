@@ -453,6 +453,7 @@ class Tank(pygame.sprite.Sprite):
     def ai_update(self):
         """Базовый метод для ИИ управления (пустая реализация)"""
         pass
+
     def update(self, input_keys):
         if self.is_alive and self.is_player:
             old_rect = self.rect.copy()
@@ -497,19 +498,28 @@ class Tank(pygame.sprite.Sprite):
             self._animate()
 
     def _animate(self):
-        global current_player_sound  # перемещено в начало функции
+        global current_player_sound
         now = pygame.time.get_ticks()
         if self.is_moving:
             if now - self.last_update > self.animation_interval:
                 self.last_update = now
                 self.current_sprite = (self.current_sprite + 1) % 2
         else:
-            # Если игрок не движется, запускаем звук stand (если ещё не играет)
+            # Если игрок не двигается:
             if self.is_player:
-                if current_player_sound != "stand":
-                    player_sound_channel.stop()
-                    player_sound_channel.play(stand_sound, loops=-1)
-                    current_player_sound = "stand"
+                # ### ИЗМЕНЕНИЕ: проверяем, есть ли ещё враги
+                if enemies_remaining_level > 0:
+                    # Если враги есть – можно играть stand
+                    if current_player_sound != "stand":
+                        player_sound_channel.stop()
+                        player_sound_channel.play(stand_sound, loops=-1)
+                        current_player_sound = "stand"
+                else:
+                    # Врагов нет – не даём включаться звуку stand
+                    if current_player_sound == "stand":
+                        player_sound_channel.stop()
+                        current_player_sound = None
+
             self.current_sprite = 0
         self.image = self.sprites[self.direction][self.current_sprite]
 
@@ -537,9 +547,13 @@ class Tank(pygame.sprite.Sprite):
                     bullet_y,
                     self.direction,
                     owner="player",
-                    speed=self.bullet_speed  # у Tank задано self.bullet_speed=10
+                    speed=self.bullet_speed
                 )
                 player_bullets.add(bullet)
+
+                ### ИЗМЕНЕНИЕ: звук выстрела игрока
+                shoot_sound.play()
+
             else:
                 # Если это враг
                 bullet = Bullet(
@@ -553,7 +567,6 @@ class Tank(pygame.sprite.Sprite):
 
             all_sprites.add(bullet)
             self.shoot_cooldown = pygame.time.get_ticks() + 500
-
 
     def destroy(self):
         if self.is_player:
@@ -572,39 +585,36 @@ class Tank(pygame.sprite.Sprite):
 # =========================
 class Enemy(Tank):
     def __init__(self, x, y, initial_direction, enemy_type=1, armor_level=1):
-        # Передаем enemy_type в базовый класс
         super().__init__(x, y, is_player=False, enemy_type=enemy_type)
         global enemy_counter
         enemy_counter += 1
         self.change_direction_time = pygame.time.get_ticks() + random.randint(1000, 5000)
-        self.speed = 2  # базовая скорость для врагов
+        self.speed = 2
         self.direction = initial_direction
         self.spawn_time = datetime.now().strftime("%H:%M:%S")
         self.destroy_time = None
         self.enemy_type = enemy_type
         self.armor_level = armor_level
-        # Если танк тяжелый, можно менять его параметры и цвет:
         if enemy_type == 4:
             self.max_health = armor_level + 1
             self.health = self.max_health
-            self._update_color()  # обновляем цвет брони
+            self._update_color()
         self.image = self.sprites[self.direction][self.current_sprite]
         self.rect = self.image.get_rect(center=self.rect.center)
         
-        # Настройка характеристик
-        if enemy_type == 1:  # Обычный танк
+        if enemy_type == 1:
             self.speed = 2
             self.bullet_speed = 8
             self.score_value = 100
-        elif enemy_type == 2:  # Бронетранспортёр
+        elif enemy_type == 2:
             self.speed = 4
             self.bullet_speed = 6
             self.score_value = 200
-        elif enemy_type == 3:  # Скорострельный танк
+        elif enemy_type == 3:
             self.speed = 1
             self.bullet_speed = 21
             self.score_value = 300
-        elif enemy_type == 4:  # Тяжелый танк
+        elif enemy_type == 4:
             self.speed = 1
             self.bullet_speed = 6
             self.armor_level = armor_level
@@ -620,49 +630,41 @@ class Enemy(Tank):
     
     def _update_color(self):
         if self.enemy_type == 4:
-            # Получаем список цветов для этого armor_level
             if self.armor_level not in ARMOR_COLORS:
-                return  # или вернуть белый цвет по умолчанию
-            
+                return
             colors_list = ARMOR_COLORS[self.armor_level]
-            
-            # Индекс в зависимости от (max_health - current_health)
             index = self.max_health - self.health
             if index < 0: index = 0
             if index >= len(colors_list):
-                index = len(colors_list) - 1  # защита
+                index = len(colors_list) - 1
             color = colors_list[index]
 
-            # Для всех направлений заново берем "базовые" кадры и перекрашиваем один раз
             for direction in ["up", "down", "left", "right"]:
                 new_frames = []
-                base_frames = heavy_tank_base_sprites[direction]  # берём «чистые»
+                base_frames = heavy_tank_base_sprites[direction]
                 for bf in base_frames:
                     frame_copy = bf.copy()
-                    # Накладываем выбранный цвет
                     frame_copy.fill(color, special_flags=pygame.BLEND_RGB_MULT)
                     new_frames.append(frame_copy)
-                # Обновляем в self.sprites
                 self.sprites[direction] = new_frames
 
-            # Устанавливаем текущую картинку заново (чтобы мгновенно изменился цвет)
             self.image = self.sprites[self.direction][self.current_sprite]
     
     def take_damage(self):
         global bonus_active
         if self.enemy_type == 4:
             self.health -= 1
-            # Спавн бонуса при первом попадании в специальный танк
             if self.is_special and self.health == self.max_health - 1:
+                # Спавн бонуса при первом попадании
                 cols = GRID_COLS - 2
                 rows = GRID_ROWS - 2
                 rand_col = random.randint(1, cols)
                 rand_row = random.randint(1, rows)
                 bonus_x = LEFT_MARGIN + (rand_col * CELL_SIZE) - CELL_SIZE//2
                 bonus_y = TOP_MARGIN + (rand_row * CELL_SIZE) - CELL_SIZE//2
-                bonus = Bonus((bonus_x, bonus_y))
+                Bonus((bonus_x, bonus_y))
                 bonus_active = True
-                self.is_special = False  # <--- ВАЖНО
+                self.is_special = False
 
             if self.health <= 0:
                 self.destroy()
@@ -685,7 +687,7 @@ class Enemy(Tank):
         tank_group.remove(self)
         kill_sound.play()
 
-        # Если no_score == True, не показываем всплывающий спрайт очков
+        # Создаём взрыв
         if no_score:
             explosion = Explosion(self.rect.center, score_points=None, popup_duration=250)
         else:
@@ -693,14 +695,17 @@ class Enemy(Tank):
         explosions.add(explosion)
         all_sprites.add(explosion)
 
+        # Начисляем очки
         if not no_score:
             global_score += self.score_value
 
+        # Уменьшаем счётчик врагов
         global enemies_remaining_level
         enemies_remaining_level -= 1
 
-        # Если «специальный» танк – спавним бонус (без изменений)
-        if self.is_special and self.enemy_type != 4:
+        # ### ИЗМЕНЕНИЕ: сразу создаём бонус (если танк был «специальным» и не тяжёлый),
+        #   чтобы звук появления (bonus_appear_sound) проигрался моментально
+        if self.is_special and self.enemy_type != 4 and not no_score:
             cols = GRID_COLS - 2
             rows = GRID_ROWS - 2
             rand_col = random.randint(1, cols)
@@ -1473,6 +1478,11 @@ while True:
         if enemies_remaining_level <= 0 and enemies_to_spawn == 0 and len(enemies) == 0 and len(spawn_group) == 0:
             if level_complete_time is None:
                 level_complete_time = now
+
+            ### ИЗМЕНЕНИЕ: останавливаем "stand" или любой звук игрока
+            player_sound_channel.stop()
+            current_player_sound = None
+
             if now - level_complete_time >= 3000:
                 next_level()
         # Очищаем замороженный кадр, если он был использован ранее
