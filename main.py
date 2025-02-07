@@ -29,6 +29,9 @@ enemy_stop = False
 enemy_stop_end_time = 0
 score_life_20000_awarded = False
 score_life_100000_awarded = False
+# Глобальные переменные для "ежесекундной" вибрации
+time_stop_rumble_next = 0    # время (pygame.time.get_ticks()), когда в следующий раз "пульс"
+armor_rumble_next = 0        # то же для бонуса "armor"
 
 # =========================
 # Константы размеров
@@ -68,6 +71,18 @@ header_font = pygame.font.SysFont("consolas", 16, bold=True)
 
 # Загрузка спрайтов
 spritesheet = pygame.image.load("sprites.png").convert_alpha()
+
+# Функция вибрации на джойстике
+def do_rumble(low, high, duration_ms):
+    """Вызывает вибрацию на геймпаде, если он есть, иначе ничего не делает."""
+    if joystick is not None:
+        try:
+            joystick.rumble(low, high, duration_ms)
+        except NotImplementedError:
+            # Если вибрация не поддерживается или метод отсутствует
+            pass
+        except Exception as e:
+            print("Rumble error:", e)
 
 def get_sprite(x, y, width, height):
     sprite = pygame.Surface((width, height), pygame.SRCALPHA)
@@ -109,7 +124,6 @@ def render_level_number(level):
     else:
         digits = [int(d) for d in str(level)]
         return [number_sprites[d] for d in digits]
-
 
 # Преобразует число в список спрайтов его цифр.
 def render_number(number):
@@ -553,6 +567,9 @@ class Tank(pygame.sprite.Sprite):
 
                 ### ИЗМЕНЕНИЕ: звук выстрела игрока
                 shoot_sound.play()
+                ### ДОБАВЛЯЕМ вибрацию на выстрел
+                # Короткая и слабая, например 0.2 силы, 150 мс:
+                do_rumble(0.2, 0.2, 150)
 
             else:
                 # Если это враг
@@ -694,6 +711,10 @@ class Enemy(Tank):
             explosion = Explosion(self.rect.center, score_points=self.score_value, popup_duration=250)
         explosions.add(explosion)
         all_sprites.add(explosion)
+
+        ### Добавляем вибрацию, если убит "ручным" способом (не гранатой)
+        # Средняя вибрация, например 0.5 силы, 300 мс:
+        do_rumble(0.4, 0.4, 300)
 
         # Начисляем очки
         if not no_score:
@@ -1282,6 +1303,14 @@ while True:
                 spawn_group.add(spawn_anim)
                 all_sprites.add(spawn_anim)
             next_spawn_time = now + random.randint(1000, 7000)
+        
+        if enemy_stop:
+            if now < enemy_stop_end_time:
+                if now >= time_stop_rumble_next:
+                    do_rumble(0.2, 0.2, 150)
+                    time_stop_rumble_next = now + 1000
+            else:
+                enemy_stop = False
 
         # Получаем состояние клавиатуры
         keys = pygame.key.get_pressed()
@@ -1350,11 +1379,15 @@ while True:
                     shield_end_time = pygame.time.get_ticks() + 10000  # 10 секунд
                     player.shield_unlimited = False
                     bonus_channel.play(bonus_take_sound)
+                    ### ИЗМЕНЕНИЕ: инициализируем armor_rumble_next
+                    armor_rumble_next = pygame.time.get_ticks() + 1000
                 elif bonus.type == "time_stop":
                     # Останавливаем движение и стрельбу врагов на 10 секунд
                     enemy_stop = True
                     enemy_stop_end_time = pygame.time.get_ticks() + 10000
                     bonus_channel.play(bonus_take_sound)
+                    ### ИЗМЕНЕНИЕ: инициализируем "следующую пульсацию" через 1 секунду
+                    time_stop_rumble_next = pygame.time.get_ticks() + 1000
                 elif bonus.type == "hq_boost":
                     # Заглушка для усиления штаба
                     print("Усиление штаба активировано (заглушка)")
@@ -1367,6 +1400,8 @@ while True:
                     # Взрываем все вражеские танки (без начисления дополнительных очков)
                     for enemy in list(enemies):
                         enemy.destroy(no_score=True)
+                    # Чуть сильнее, чем при убийстве одного танка
+                    do_rumble(0.7, 0.7, 300)
                     bonus_channel.play(bonus_take_sound)
                 elif bonus.type == "life":
                     # Добавляем одну жизнь игроку
@@ -1385,6 +1420,7 @@ while True:
                     explosion = HitExplosion(bullet.rect.center)  # Берём позицию конкретной пули
                     explosions.add(explosion)
                     all_sprites.add(explosion)
+                do_rumble(1.0, 1.0, 700)
                 player.destroy()
                 player_respawn_time = now + 3000
                 player = None
@@ -1409,6 +1445,10 @@ while True:
                 elapsed_shield = now - player.shield_start
                 shield_frame = (elapsed_shield // 20) % 2
                 game_surface.blit(shield_sprites[shield_frame], player.rect.topleft)
+                if not player.shield_unlimited:
+                    if now >= armor_rumble_next:
+                        do_rumble(0.0, 0.2, 150)
+                        armor_rumble_next = now + 1000
 
         if player is not None:
             if player.is_moving:
