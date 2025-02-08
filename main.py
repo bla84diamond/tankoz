@@ -362,6 +362,16 @@ bonus_life_sound = pygame.mixer.Sound("sounds/bonus_life.ogg")
 bonus_channel = pygame.mixer.Channel(1)  # Отдельный канал для бонусов
 current_player_sound = None  # звук "stand" не запускается, пока игрок не двигается
 
+# Точка появления игрока: 5-я клетка снизу (x=208, y=432)
+player_spawn_point = (208, 432)
+
+# Позиции появления врагов (на верхней строке)
+spawn_positions = [
+    (LEFT_MARGIN + 0 * CELL_SIZE + 16, TOP_MARGIN + 0 * CELL_SIZE + 16),
+    (LEFT_MARGIN + 6 * CELL_SIZE + 16, TOP_MARGIN + 0 * CELL_SIZE + 16),
+    (LEFT_MARGIN + 12 * CELL_SIZE + 16, TOP_MARGIN + 0 * CELL_SIZE + 16)
+]
+
 # =========================
 # Группы игровых объектов
 # =========================
@@ -374,6 +384,72 @@ player_bullets = pygame.sprite.Group()   # пули игрока
 enemy_bullets = pygame.sprite.Group()    # пули врагов
 bonus_group = pygame.sprite.Group()
 popups = pygame.sprite.Group()
+obstacles = pygame.sprite.Group()
+forests = pygame.sprite.Group()          # Группа леса
+
+class BrickWall(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        self.image = get_sprite(512, 0, 32, 32)
+        self.rect = self.image.get_rect(topleft=(x, y))
+
+def place_random_brick_wall():
+    all_cells = []
+    for col in range(GRID_COLS):
+        for row in range(GRID_ROWS):
+            all_cells.append((col, row))
+
+    # Player spawn
+    col_player = (player_spawn_point[0] - LEFT_MARGIN) // CELL_SIZE
+    row_player = (player_spawn_point[1] - TOP_MARGIN) // CELL_SIZE
+
+    # Enemy spawns
+    enemy_spawn_cells = []
+    for pos in spawn_positions:
+        col_enemy = (pos[0] - LEFT_MARGIN) // CELL_SIZE
+        row_enemy = (pos[1] - TOP_MARGIN) // CELL_SIZE
+        enemy_spawn_cells.append((col_enemy, row_enemy))
+
+    excluded_cells = set()
+    excluded_cells.add((col_player, row_player))
+    for c in enemy_spawn_cells:
+        excluded_cells.add(c)
+
+    valid_cells = [c for c in all_cells if c not in excluded_cells]
+
+    if len(valid_cells) > 0:
+        chosen_col, chosen_row = random.choice(valid_cells)
+        x = LEFT_MARGIN + chosen_col * CELL_SIZE
+        y = TOP_MARGIN + chosen_row * CELL_SIZE
+        brick = BrickWall(x, y)
+        obstacles.add(brick)
+        all_sprites.add(brick)
+    else:
+        print("No valid cell found for BrickWall!")
+
+class Forest(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        # Вырезаем спрайт 32x32 по координатам (544, 64) на вашем sprites.png
+        self.image = get_sprite(544, 64, 32, 32)
+        self.rect = self.image.get_rect(topleft=(x, y))
+
+def place_random_forest():
+    all_cells = []
+    for col in range(GRID_COLS):
+        for row in range(GRID_ROWS):
+            all_cells.append((col, row))
+
+    # Тут, возможно, исключаете клетки спавна (или нет — раз лес не мешает спавну).
+    # Если лес не мешает, то можно и не исключать.
+
+    if len(all_cells) > 0:
+        chosen_col, chosen_row = random.choice(all_cells)
+        x = LEFT_MARGIN + chosen_col * CELL_SIZE
+        y = TOP_MARGIN + chosen_row * CELL_SIZE
+        f = Forest(x, y)
+        forests.add(f)
+        all_sprites.add(f)  # если хотите видеть его и в all_sprites
 
 # =========================
 # Класс отобрвжения очков
@@ -543,12 +619,11 @@ class Tank(pygame.sprite.Sprite):
             self.bullet_speed = 10
             self.can_double_shot = False
             self.armor_piercing = False
-            # И вызываем метод, который подменит self.sprites на нужные для upgrade_level
             self.set_upgrade_level(upgrade_level)
         
         # Прочие поля
         self.last_update = pygame.time.get_ticks()
-        self.animation_interval = 500
+        self.animation_interval = 60
         self.is_alive = True
         self.is_moving = False
         self.last_key = None
@@ -600,20 +675,6 @@ class Tank(pygame.sprite.Sprite):
         self.image = self.sprites[self.direction][self.current_sprite]
         self.rect = self.image.get_rect(center=old_center)
 
-    ### НОВОЕ: пример упрощённого "сдвига" спрайтов
-    def _make_offset_sprites(self, base_sprites, offset_y):
-        result = {}
-        for direction, frames in base_sprites.items():
-            new_frames = []
-            for frame in frames:
-                # Реальной "прорисовки" сдвига тут нет, просто возвращаем те же кадры.
-                # Если у вас в sprites.png действительно есть спрайты уровней "ниже" по Y,
-                # лучше заранее создать словари player_sprites_level2,3,4. 
-                # Для примера оставим как есть.
-                new_frames.append(frame)
-            result[direction] = new_frames
-        return result
-    
     def ai_update(self):
         """Базовый метод для ИИ управления (пустая реализация)"""
         pass
@@ -652,6 +713,11 @@ class Tank(pygame.sprite.Sprite):
             # Ограничение движения в пределах игровой зоны
             self.rect.clamp_ip(FIELD_RECT)
             
+            for obstacle in obstacles:
+                if self.rect.colliderect(obstacle.rect):
+                    self.rect = old_rect
+                    break
+
             # Базовая проверка коллизий с другими танками
             for tank in tank_group:
                 if tank != self and self.rect.colliderect(tank.rect):
@@ -669,6 +735,7 @@ class Tank(pygame.sprite.Sprite):
                 self.last_update = now
                 self.current_sprite = (self.current_sprite + 1) % 2
         else:
+            self.current_sprite = 0
             # Если игрок не двигается:
             if self.is_player:
                 # ### ИЗМЕНЕНИЕ: проверяем, есть ли ещё враги
@@ -902,13 +969,10 @@ class Enemy(Tank):
     def ai_update(self):
         global enemy_stop, enemy_stop_end_time
         if enemy_stop:
-            # Если время остановки еще не истекло, пропускаем обновление для этого врага
             if pygame.time.get_ticks() < enemy_stop_end_time:
                 return
             else:
-                enemy_stop = False  # Сброс эффекта после истечения времени
-
-        # Обновление направления и движения
+                enemy_stop = False  # сброс эффекта
         old_rect = self.rect.copy()
         now = pygame.time.get_ticks()
         if now >= self.change_direction_time:
@@ -931,9 +995,17 @@ class Enemy(Tank):
                 self.direction = random.choice(["up", "down", "left", "right"])
                 break
         self.rect.clamp_ip(FIELD_RECT)
-
-        # Выполняем анимацию (обновляет self.current_sprite и self.image)
+        
+        # Обновляем флаг движения: если позиция изменилась – считаем, что танк движется
+        self.is_moving = (old_rect.x != self.rect.x or old_rect.y != self.rect.y)
+        
+        # Запускаем анимацию (она теперь будет проверять self.is_moving)
         self._animate()
+
+        for obstacle in obstacles:
+            if self.rect.colliderect(obstacle.rect):
+                self.rect = old_rect
+                break
 
         # Если танк специальный (бонусный), переключаем спрайт с использованием бонусных спрайтов
         if self.is_special and self.is_alive:
@@ -994,6 +1066,17 @@ class Bullet(pygame.sprite.Sprite):
         elif self.direction == "right":
             self.rect.x += self.speed
         
+        # Проверка столкновения с кирпичными препятствиями
+        hits = pygame.sprite.spritecollide(self, obstacles, False)
+        if hits:
+            if self.owner == "player":
+                wall_sound.play()
+            explosion = HitExplosion(old_pos)
+            explosions.add(explosion)
+            all_sprites.add(explosion)
+            self.kill()
+            return
+
         # Проверка столкновения с границами игрового поля
         if not FIELD_RECT.collidepoint(self.rect.center):
             # Исправление: звук от столкновения со стеной проигрываем ТОЛЬКО если пуля принадлежит игроку
@@ -1192,6 +1275,11 @@ def level_transition(level):
     explosions.empty()
     player_bullets.empty()
     enemy_bullets.empty()
+    obstacles.empty()
+    forests.empty()
+
+    place_random_brick_wall()
+    place_random_forest()
 
     #
     # --- Сокращение анимации закрытия до 600 мс (было 1200) ---
@@ -1299,11 +1387,15 @@ def main_menu():
     slide_duration = 1000
     menu_start_time = pygame.time.get_ticks()
     selection_index = 0
-    indicator_sprite = player_sprites_level1["right"][0]
-    indicator_rect = indicator_sprite.get_rect()
     clock = pygame.time.Clock()
     selected_mode = None
     joystick_debounce = 0  # Защита от двойного срабатывания
+
+    # Параметры анимации для индикатора выбора (танка)
+    indicator_anim_index = 0
+    last_indicator_anim_update = pygame.time.get_ticks()
+    # Массив спрайтов танка для выбранного направления (например, "right")
+    indicator_sprites = player_sprites_level1["right"]
 
     while selected_mode is None:
         now = pygame.time.get_ticks()
@@ -1315,11 +1407,16 @@ def main_menu():
             else:
                 menu_y = final_menu_y
 
+        # Обновляем анимацию индикатора каждые 60 мс
+        if now - last_indicator_anim_update >= 60:
+            indicator_anim_index = (indicator_anim_index + 1) % len(indicator_sprites)
+            last_indicator_anim_update = now
+
+        # Обработка событий
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit()
-                
             # Обработка клавиатуры
             if event.type == pygame.KEYDOWN:
                 if now >= menu_start_time + 1000 + slide_duration:
@@ -1329,21 +1426,20 @@ def main_menu():
                         selection_index = (selection_index + 1) % len(option_texts)
                     if event.key == pygame.K_SPACE:
                         selected_mode = selection_index
-            
             # Обработка джойстика
             if event.type == pygame.JOYHATMOTION:
                 if now >= menu_start_time + 1000 + slide_duration and now - joystick_debounce > 200:
-                    if event.value[1] == 1:  # Вверх
+                    if event.value[1] == 1:
                         selection_index = (selection_index - 1) % len(option_texts)
                         joystick_debounce = now
-                    elif event.value[1] == -1:  # Вниз
+                    elif event.value[1] == -1:
                         selection_index = (selection_index + 1) % len(option_texts)
                         joystick_debounce = now
-                        
             if event.type == pygame.JOYBUTTONDOWN:
                 if now >= menu_start_time + 1000 + slide_duration:
                     selected_mode = selection_index
 
+        # Рисуем меню
         menu_surface = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
         menu_surface.fill((0, 0, 0))
         title_x = (WINDOW_WIDTH - title_rect.width) // 2
@@ -1353,9 +1449,11 @@ def main_menu():
             opt_rect = opt.get_rect()
             opt_x = (WINDOW_WIDTH - opt_rect.width) // 2
             menu_surface.blit(opt, (opt_x, current_y))
+            # Если этот пункт выбран, рисуем анимированный индикатор (танк) слева от него
             if i == selection_index:
+                indicator_rect = indicator_sprites[indicator_anim_index].get_rect()
                 indicator_rect.midright = (opt_x - 10, current_y + opt_rect.height // 2)
-                menu_surface.blit(indicator_sprite, indicator_rect)
+                menu_surface.blit(indicator_sprites[indicator_anim_index], indicator_rect)
             current_y += opt_rect.height + spacing
 
         screen.fill((0, 0, 0))
@@ -1378,17 +1476,7 @@ level_transition(1)
 player_respawn_time = 0
 player = None  # игрок появляется сразу без анимации появления
 
-# Точка появления игрока: 5-я клетка снизу (x=208, y=432)
-player_spawn_point = (208, 432)
-
 next_spawn_time = pygame.time.get_ticks() + random.randint(1000, 7000)
-
-# Позиции появления врагов (на верхней строке)
-spawn_positions = [
-    (LEFT_MARGIN + 0 * CELL_SIZE + 16, TOP_MARGIN + 0 * CELL_SIZE + 16),
-    (LEFT_MARGIN + 6 * CELL_SIZE + 16, TOP_MARGIN + 0 * CELL_SIZE + 16),
-    (LEFT_MARGIN + 12 * CELL_SIZE + 16, TOP_MARGIN + 0 * CELL_SIZE + 16)
-]
 
 spawn_occupancy = { pos: False for pos in spawn_positions }
 
@@ -1647,6 +1735,12 @@ while True:
             shield_frame = (elapsed_shield // 20) % 2
             game_surface.blit(shield_sprites[shield_frame], player.rect.topleft)
         popups.draw(game_surface)
+
+        # РИСУЕМ ЛЕС *ПОВЕРХ* ВСЕГО
+        forests.draw(game_surface)
+        # А ТЕПЕРЬ БОНУСЫ
+        bonus_group.draw(game_surface)
+        
         screen.fill((0, 0, 0))
         screen.blit(game_surface, (0, 0))
         # Рисуем на боковой панели (относительно окна) сетку оставшихся врагов
