@@ -14,7 +14,7 @@ if pygame.joystick.get_count() > 0:
 # Параметры отладки
 # =========================
 show_grid = True        # Видимость сетки
-print(pygame.version.ver)
+
 # =========================
 # Глобальные переменные
 # =========================
@@ -389,9 +389,153 @@ forests = pygame.sprite.Group()          # Группа леса
 
 class BrickWall(pygame.sprite.Sprite):
     def __init__(self, x, y):
+        """
+        Кирпичный блок 32×32, который может разрушаться полосками.
+        Для попаданий, приходящих с разных сторон, ведётся учёт повреждений:
+          • при попадании по верхней/нижней стороне (пуля летит вертикально)
+            удаляется горизонтальная полоса – 32×8 (при центральном попадании) или 16×8 (при попадании по углу);
+          • при попадании по левой/правой стороне (пуля летит горизонтально)
+            удаляется вертикальная полоса – 8×32 (при центральном попадании) или 8×16 (при ударе по углу).
+        Для каждого направления damage хранится в единицах «полос» (каждая полоса – 8 пикселей).
+        Максимальное разрушение с каждой стороны – 2 полос (то есть 16 пикселей).
+        """
         super().__init__()
-        self.image = get_sprite(512, 0, 32, 32)
-        self.rect = self.image.get_rect(topleft=(x, y))
+        self.rect = pygame.Rect(x, y, 32, 32)
+        self.full_image = get_sprite(512, 0, 32, 32)
+        # damage-счетчики (в единицах «полос», каждая полоса = 8px)
+        self.horiz_damage_top = 0.0    # повреждено сверху (при попадании снаружи сверху)
+        self.horiz_damage_bottom = 0.0  # повреждено снизу
+        self.vert_damage_left = 0.0     # повреждено слева
+        self.vert_damage_right = 0.0    # повреждено справа
+        self.update_image()
+    
+    def update_image(self):
+        """
+        Пересчитываем изображение кирпичного блока с учётом накопленных повреждений.
+        Вычисляем оставшийся прямоугольник: отступы слева и сверху – damage*8 пикселей;
+        ширина = 32 – (damage_left + damage_right)*8, высота = 32 – (damage_top + damage_bottom)*8.
+        Если оставшаяся область слишком мала, блок считается полностью разрушенным.
+        После формирования нового изображения пересчитывается маска для точной коллизии.
+        """
+        left = int(self.vert_damage_left * 8)
+        top = int(self.horiz_damage_top * 8)
+        right = 32 - int(self.vert_damage_right * 8)
+        bottom = 32 - int(self.horiz_damage_bottom * 8)
+        width = right - left
+        height = bottom - top
+        if width <= 0 or height <= 0:
+            # Блок полностью разрушен
+            self.image = pygame.Surface((32, 32), pygame.SRCALPHA)
+            self.kill()
+            return
+        self.image = pygame.Surface((32, 32), pygame.SRCALPHA)
+        remaining = self.full_image.subsurface(pygame.Rect(left, top, width, height))
+        # Рисуем оставшуюся часть в исходном положении (с тем же отступом)
+        self.image.blit(remaining, (left, top))
+        self.mask = pygame.mask.from_surface(self.image)
+    
+    def take_damage(self, bullet):
+        """
+        Определяет, какую полосу разрушить, в зависимости от направления полёта пули
+        и места попадания внутри блока.
+        
+        Алгоритм:
+          1. Определяем локальные координаты попадания (относительно верхнего левого угла блока).
+          2. С помощью bullet.direction вычисляем «сторону удара»: при пули, летящей вверх,
+             удар происходит по нижней стороне блока, при вниз – по верхней, при влево – по правой,
+             при вправо – по левой.
+          3. Для попаданий с вертикальной ориентацией (удар сверху/снизу):
+             если координата X попадания находится в центральном диапазоне (от 8 до 24),
+             то засчитываем «центральный» удар (полная полоса – 32×8), иначе – удар по углу (половина полосы – 16×8).
+          4. Аналогично для попаданий с горизонтальной ориентацией (слева/справа):
+             если координата Y попадания в диапазоне [8, 24], то центральный удар (полная полоса – 8×32),
+             иначе – удар по углу (половина полосы – 8×16).
+          5. При попадании обновляем соответствующий damage-счетчик (максимум 2.0, то есть 16 пикселей),
+             затем вызываем update_image() и возвращаем True, если что-то изменилось.
+        """
+        # Вычисляем координаты попадания относительно блока
+        local_x = bullet.rect.centerx - self.rect.x
+        local_y = bullet.rect.centery - self.rect.y
+        # Определяем сторону удара (используем обратное направление движения пули):
+        if bullet.direction == "up":
+            impact_side = "bottom"   # пуля летит вверх, удар происходит снизу
+        elif bullet.direction == "down":
+            impact_side = "top"
+        elif bullet.direction == "left":
+            impact_side = "right"
+        elif bullet.direction == "right":
+            impact_side = "left"
+        else:
+            impact_side = None
+
+        # Порог для определения «центральности» удара (в пикселях)
+        threshold = 8
+
+        # Если удар по верхней/нижней стороне (горизонтальное разрушение)
+        if impact_side in ("top", "bottom"):
+            # Для верхней стороны расстояние от верхнего края, для нижней – от нижнего края
+            side_distance = local_y if impact_side == "top" else (32 - local_y)
+            # Если по оси X попадание центральное, считаем удар центральным (полная полоса 32×8)
+            if 8 <= local_x <= 24:
+                damage = 1.0
+            else:
+                damage = 0.5
+            if side_distance <= (threshold + 4):
+                if impact_side == "top":
+                    if self.horiz_damage_top < 2.0:
+                        self.horiz_damage_top += damage
+                        if self.horiz_damage_top > 2.0:
+                            self.horiz_damage_top = 2.0
+                        self.update_image()
+                        return True
+                else:  # impact_side == "bottom"
+                    if self.horiz_damage_bottom < 2.0:
+                        self.horiz_damage_bottom += damage
+                        if self.horiz_damage_bottom > 2.0:
+                            self.horiz_damage_bottom = 2.0
+                        self.update_image()
+                        return True
+            return False
+
+        # Если удар по левой/правой стороне (вертикальное разрушение)
+        elif impact_side in ("left", "right"):
+            side_distance = local_x if impact_side == "left" else (32 - local_x)
+            if 8 <= local_y <= 24:
+                damage = 1.0
+            else:
+                damage = 0.5
+            if side_distance <= (threshold + 4):
+                if impact_side == "left":
+                    if self.vert_damage_left < 2.0:
+                        self.vert_damage_left += damage
+                        if self.vert_damage_left > 2.0:
+                            self.vert_damage_left = 2.0
+                        self.update_image()
+                        return True
+                else:  # impact_side == "right"
+                    if self.vert_damage_right < 2.0:
+                        self.vert_damage_right += damage
+                        if self.vert_damage_right > 2.0:
+                            self.vert_damage_right = 2.0
+                        self.update_image()
+                        return True
+            return False
+
+        return False
+
+    def collides_with_point(self, point):
+        """
+        Тест коллизии по пиксельной маске: возвращает True,
+        если по данной экранной точке (point) присутствует непрозрачный пиксель.
+        """
+        local_x = point[0] - self.rect.x
+        local_y = point[1] - self.rect.y
+        if local_x < 0 or local_x >= 32 or local_y < 0 or local_y >= 32:
+            return False
+        return self.mask.get_at((int(local_x), int(local_y))) != 0
+
+    def draw(self, surface):
+        surface.blit(self.image, self.rect.topleft)
 
 def place_random_brick_wall():
     all_cells = []
@@ -714,9 +858,17 @@ class Tank(pygame.sprite.Sprite):
             self.rect.clamp_ip(FIELD_RECT)
             
             for obstacle in obstacles:
-                if self.rect.colliderect(obstacle.rect):
-                    self.rect = old_rect
-                    break
+                if hasattr(obstacle, 'mask'):
+                    # Вычисляем маску для танка на основе его текущего изображения
+                    tank_mask = pygame.mask.from_surface(self.image)
+                    offset = (obstacle.rect.x - self.rect.x, obstacle.rect.y - self.rect.y)
+                    if tank_mask.overlap(obstacle.mask, offset):
+                        self.rect = old_rect
+                        break
+                else:
+                    if self.rect.colliderect(obstacle.rect):
+                        self.rect = old_rect
+                        break
 
             # Базовая проверка коллизий с другими танками
             for tank in tank_group:
@@ -1051,8 +1203,6 @@ class Bullet(pygame.sprite.Sprite):
         self.speed = speed  # Добавлен параметр скорости
         self.direction = direction
         self.owner = owner
-
-        ### ИЗМЕНЕНИЕ: по умолчанию False, игрок 4 уровня устанавливает True
         self.armor_piercing = False
 
     def update(self):
@@ -1065,21 +1215,28 @@ class Bullet(pygame.sprite.Sprite):
             self.rect.x -= self.speed
         elif self.direction == "right":
             self.rect.x += self.speed
-        
-        # Проверка столкновения с кирпичными препятствиями
-        hits = pygame.sprite.spritecollide(self, obstacles, False)
-        if hits:
-            if self.owner == "player":
-                wall_sound.play()
-            explosion = HitExplosion(old_pos)
-            explosions.add(explosion)
-            all_sprites.add(explosion)
-            self.kill()
-            return
 
-        # Проверка столкновения с границами игрового поля
+        # Проверяем столкновение с препятствиями с использованием collide_mask
+        hits = pygame.sprite.spritecollide(self, obstacles, False, pygame.sprite.collide_mask)
+        if hits:
+            for obstacle in hits:
+                if isinstance(obstacle, BrickWall):
+                    # Если центр пули попадает в неразрушенную часть кирпичной стены
+                    if obstacle.collides_with_point(self.rect.center):
+                        if obstacle.take_damage(self):
+                            explosion = HitExplosion(old_pos)
+                            explosions.add(explosion)
+                            all_sprites.add(explosion)
+                            self.kill()
+                            return
+                else:
+                    # Для прочих препятствий просто убираем пулю (без звука)
+                    self.kill()
+                    return
+
+        # Если пуля уходит за пределы игрового поля,
+        # то для пуль игрока проигрываем звук, для вражеских — нет
         if not FIELD_RECT.collidepoint(self.rect.center):
-            # Исправление: звук от столкновения со стеной проигрываем ТОЛЬКО если пуля принадлежит игроку
             if self.owner == "player":
                 wall_sound.play()
             explosion = HitExplosion(old_pos)
@@ -1624,6 +1781,7 @@ while True:
             bonus_hit = pygame.sprite.spritecollide(player, bonus_group, True)
             for bonus in bonus_hit:
                 # За взятие любого бонуса начисляем 500 очков
+
                 global_score += 500
 
                 # Обработка бонуса в зависимости от его типа
@@ -1730,6 +1888,9 @@ while True:
             for y in range(FIELD_RECT.top, FIELD_RECT.bottom + 1, CELL_SIZE):
                 pygame.draw.line(game_surface, (50, 50, 50), (FIELD_RECT.left, y), (FIELD_RECT.right, y))
         all_sprites.draw(game_surface)
+        for obstacle in obstacles:
+            if isinstance(obstacle, BrickWall):
+                obstacle.draw(game_surface)
         if player is not None and hasattr(player, "shield_active") and player.shield_active:
             elapsed_shield = pygame.time.get_ticks() - player.shield_start
             shield_frame = (elapsed_shield // 20) % 2
