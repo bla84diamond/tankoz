@@ -14,10 +14,12 @@ if pygame.joystick.get_count() > 0:
 # Параметры отладки
 # =========================
 show_grid = True        # Видимость сетки
-
+print(pygame.version.ver)
 # =========================
 # Глобальные переменные
 # =========================
+### ИЗМЕНЕНИЕ: глобальная переменная для уровня прокачки игрока (1..4)
+player_upgrade_level = 1
 global_score = 0  # Добавлено для хранения очков
 bonus_active = False  # Флаг активного бонуса
 bonus_pos = (0, 0)  # Позиция бонуса
@@ -60,7 +62,7 @@ WINDOW_WIDTH = GAME_WIDTH
 WINDOW_HEIGHT = GAME_HEIGHT  # 480
 
 screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-pygame.display.set_caption("Боевые танки")
+pygame.display.set_caption("Battle City PC")
 
 # Поверхности для игры и отладки
 game_surface = pygame.Surface((GAME_WIDTH, GAME_HEIGHT))
@@ -139,12 +141,85 @@ def render_number(number):
     digits.reverse()
     return [number_sprites[d] for d in digits]
 
-# Спрайты для танков игрока и врагов
-player_sprites = {
-    "up": [get_sprite(0, 0, 32, 32), get_sprite(32, 0, 32, 32)],
-    "left": [get_sprite(64, 0, 32, 32), get_sprite(96, 0, 32, 32)],
-    "down": [get_sprite(128, 0, 32, 32), get_sprite(160, 0, 32, 32)],
-    "right": [get_sprite(192, 0, 32, 32), get_sprite(224, 0, 32, 32)]
+# Спрайты для танков игрока
+# УРОВЕНЬ 1 (как ваш прежний player_sprites)
+player_sprites_level1 = {
+    "up": [
+        get_sprite(0, 0, 32, 32),
+        get_sprite(32, 0, 32, 32)
+    ],
+    "left": [
+        get_sprite(64, 0, 32, 32),
+        get_sprite(96, 0, 32, 32)
+    ],
+    "down": [
+        get_sprite(128, 0, 32, 32),
+        get_sprite(160, 0, 32, 32)
+    ],
+    "right": [
+        get_sprite(192, 0, 32, 32),
+        get_sprite(224, 0, 32, 32)
+    ]
+}
+
+# УРОВЕНЬ 2 (кадры на 32 пикселя ниже по Y, например, 0+32=32, 32+32=64, и т.д.)
+player_sprites_level2 = {
+    "up": [
+        get_sprite(0, 32, 32, 32),
+        get_sprite(32, 32, 32, 32)
+    ],
+    "left": [
+        get_sprite(64, 32, 32, 32),
+        get_sprite(96, 32, 32, 32)
+    ],
+    "down": [
+        get_sprite(128, 32, 32, 32),
+        get_sprite(160, 32, 32, 32)
+    ],
+    "right": [
+        get_sprite(192, 32, 32, 32),
+        get_sprite(224, 32, 32, 32)
+    ]
+}
+
+# УРОВЕНЬ 3 (сдвиг на 64 пикселя по Y)
+player_sprites_level3 = {
+    "up": [
+        get_sprite(0, 64, 32, 32),
+        get_sprite(32, 64, 32, 32)
+    ],
+    "left": [
+        get_sprite(64, 64, 32, 32),
+        get_sprite(96, 64, 32, 32)
+    ],
+    "down": [
+        get_sprite(128, 64, 32, 32),
+        get_sprite(160, 64, 32, 32)
+    ],
+    "right": [
+        get_sprite(192, 64, 32, 32),
+        get_sprite(224, 64, 32, 32)
+    ]
+}
+
+# УРОВЕНЬ 4 (сдвиг на 96 пикселей по Y)
+player_sprites_level4 = {
+    "up": [
+        get_sprite(0, 96, 32, 32),
+        get_sprite(32, 96, 32, 32)
+    ],
+    "left": [
+        get_sprite(64, 96, 32, 32),
+        get_sprite(96, 96, 32, 32)
+    ],
+    "down": [
+        get_sprite(128, 96, 32, 32),
+        get_sprite(160, 96, 32, 32)
+    ],
+    "right": [
+        get_sprite(192, 96, 32, 32),
+        get_sprite(224, 96, 32, 32)
+    ]
 }
 
 enemy_sprites = {
@@ -437,32 +512,107 @@ class SpawnAnimation(pygame.sprite.Sprite):
 # Класс Tank – базовый класс для танков (игрока и врагов)
 # =========================
 class Tank(pygame.sprite.Sprite):
-    def __init__(self, x, y, is_player=True, enemy_type=None):
+    def __init__(self, x, y, is_player=True, enemy_type=None, upgrade_level=1):
         super().__init__()
         self.is_player = is_player
+        self.shoot_cooldown = 0
+        
+        # 1) Изначально задаём self.sprites чем-то, чтобы не получить AttributeError
         if is_player:
-            self.sprites = player_sprites  # Для игрока можно использовать общий словарь
-            self.bullet_speed = 10
+            # Например, уровень 1 по умолчанию
+            self.sprites = player_sprites_level1
+            self.speed = 3
         else:
+            # Если враг – берём enemy_sprites
+            self.speed = 2
             if enemy_type is None:
                 enemy_type = 1
-            # Создаем копии спрайтов для данного врага, чтобы изменения не влияли на глобальные спрайты
             self.sprites = {
                 direction: [frame.copy() for frame in frames]
                 for direction, frames in enemy_sprites[enemy_type].items()
             }
+
+        # 2) После этого уже можем смело брать "direction" и "current_sprite"
+        self.direction = "up"
         self.current_sprite = 0
-        self.last_update = pygame.time.get_ticks()
-        self.animation_interval = 500
-        self.direction = "up"  # начальное направление
         self.image = self.sprites[self.direction][self.current_sprite]
         self.rect = self.image.get_rect(center=(x, y))
-        self.speed = 3
-        self.shoot_cooldown = 0
+
+        # 3) Если это игрок – донастраиваем
+        if is_player:
+            self.bullet_speed = 10
+            self.can_double_shot = False
+            self.armor_piercing = False
+            # И вызываем метод, который подменит self.sprites на нужные для upgrade_level
+            self.set_upgrade_level(upgrade_level)
+        
+        # Прочие поля
+        self.last_update = pygame.time.get_ticks()
+        self.animation_interval = 500
         self.is_alive = True
         self.is_moving = False
         self.last_key = None
-        self.shield_unlimited = False  # для бесконечного щита
+        self.shield_unlimited = False
+        self.shots_in_burst = 0
+        self.last_shot_time = 0
+        
+        # Для врагов
+        self.enemy_type = enemy_type
+        
+        ### НОВОЕ: Если это игрок – применим сразу уровень upgrade_level
+        if is_player:
+            self.set_upgrade_level(upgrade_level)
+
+    def set_upgrade_level(self, level):
+        self.upgrade_level = level
+        
+        # 1) Выбираем готовый словарь спрайтов
+        if level == 1:
+            self.sprites = player_sprites_level1
+        elif level == 2:
+            self.sprites = player_sprites_level2
+        elif level == 3:
+            self.sprites = player_sprites_level3
+        elif level == 4:
+            self.sprites = player_sprites_level4
+
+        # 2) Меняем скорость пули и флаги
+        if level == 1:
+            self.bullet_speed = 10
+            self.can_double_shot = False
+            self.armor_piercing = False
+        elif level == 2:
+            self.bullet_speed = 14
+            self.can_double_shot = False
+            self.armor_piercing = False
+        elif level == 3:
+            self.bullet_speed = 14
+            self.can_double_shot = True
+            self.armor_piercing = False
+        elif level == 4:
+            self.bullet_speed = 14
+            self.can_double_shot = True
+            self.armor_piercing = True
+
+        # 3) Пересоздаём rect по центру, чтобы обновить self.image
+        old_center = self.rect.center
+        self.current_sprite = 0
+        self.image = self.sprites[self.direction][self.current_sprite]
+        self.rect = self.image.get_rect(center=old_center)
+
+    ### НОВОЕ: пример упрощённого "сдвига" спрайтов
+    def _make_offset_sprites(self, base_sprites, offset_y):
+        result = {}
+        for direction, frames in base_sprites.items():
+            new_frames = []
+            for frame in frames:
+                # Реальной "прорисовки" сдвига тут нет, просто возвращаем те же кадры.
+                # Если у вас в sprites.png действительно есть спрайты уровней "ниже" по Y,
+                # лучше заранее создать словари player_sprites_level2,3,4. 
+                # Для примера оставим как есть.
+                new_frames.append(frame)
+            result[direction] = new_frames
+        return result
     
     def ai_update(self):
         """Базовый метод для ИИ управления (пустая реализация)"""
@@ -538,52 +688,65 @@ class Tank(pygame.sprite.Sprite):
         self.image = self.sprites[self.direction][self.current_sprite]
 
     def shoot(self):
-        """Стрельба (общий метод)."""
-        if self.shoot_cooldown < pygame.time.get_ticks() and self.is_alive:
-            # Общие вычисления начальной позиции пули
-            if self.direction == "up":
-                bullet_x = self.rect.centerx
-                bullet_y = self.rect.top - 4
-            elif self.direction == "down":
-                bullet_x = self.rect.centerx
-                bullet_y = self.rect.bottom + 4
-            elif self.direction == "left":
-                bullet_x = self.rect.left - 4
-                bullet_y = self.rect.centery
-            else:  # self.direction == "right"
-                bullet_x = self.rect.right + 4
-                bullet_y = self.rect.centery
+        """Стрельба с учётом двойного выстрела (can_double_shot)."""
+        now = pygame.time.get_ticks()
+        
+        if not self.can_double_shot:
+            # Обычный выстрел (кулдаун 500 мс)
+            if now >= self.shoot_cooldown and self.is_alive:
+                self._do_shot()
+                self.shoot_cooldown = now + 500
+        else:
+            # Двойной выстрел
+            if (now - self.last_shot_time) > 100:
+                self.shots_in_burst = 0
+            
+            if now >= self.shoot_cooldown and self.is_alive:
+                self._do_shot()
+                self.shots_in_burst += 1
+                self.last_shot_time = now
+                
+                if self.shots_in_burst >= 2:
+                    # после второго выстрела кулдаун 500
+                    self.shoot_cooldown = now + 500
+                    self.shots_in_burst = 0
+                else:
+                    # между первым и вторым — не более 100 мс
+                    self.shoot_cooldown = now + 100
 
-            if self.is_player:
-                # Если это игрок
-                bullet = Bullet(
-                    bullet_x,
-                    bullet_y,
-                    self.direction,
-                    owner="player",
-                    speed=self.bullet_speed
-                )
-                player_bullets.add(bullet)
+    def _do_shot(self):
+        """Непосредственно создаёт пулю."""
+        if self.direction == "up":
+            bullet_x = self.rect.centerx
+            bullet_y = self.rect.top - 4
+        elif self.direction == "down":
+            bullet_x = self.rect.centerx
+            bullet_y = self.rect.bottom + 4
+        elif self.direction == "left":
+            bullet_x = self.rect.left - 4
+            bullet_y = self.rect.centery
+        else:  # right
+            bullet_x = self.rect.right + 4
+            bullet_y = self.rect.centery
 
-                ### ИЗМЕНЕНИЕ: звук выстрела игрока
-                shoot_sound.play()
-                ### ДОБАВЛЯЕМ вибрацию на выстрел
-                # Короткая и слабая, например 0.2 силы, 150 мс:
-                do_rumble(0.2, 0.2, 150)
+        # Создаём пулю
+        bullet = Bullet(
+            bullet_x,
+            bullet_y,
+            self.direction,
+            owner="player",
+            speed=self.bullet_speed
+        )
+        # Если уровень 4, пули бронебойные
+        if self.armor_piercing:
+            bullet.armor_piercing = True
+        
+        player_bullets.add(bullet)
+        all_sprites.add(bullet)
 
-            else:
-                # Если это враг
-                bullet = Bullet(
-                    bullet_x,
-                    bullet_y,
-                    self.direction,
-                    owner="enemy",
-                    speed=self.bullet_speed
-                )
-                enemy_bullets.add(bullet)
-
-            all_sprites.add(bullet)
-            self.shoot_cooldown = pygame.time.get_ticks() + 500
+        # Звуки, вибрация
+        shoot_sound.play()
+        do_rumble(0.2, 0.2, 150)
 
     def destroy(self):
         if self.is_player:
@@ -817,6 +980,9 @@ class Bullet(pygame.sprite.Sprite):
         self.direction = direction
         self.owner = owner
 
+        ### ИЗМЕНЕНИЕ: по умолчанию False, игрок 4 уровня устанавливает True
+        self.armor_piercing = False
+
     def update(self):
         old_pos = self.rect.center
         if self.direction == "up":
@@ -920,7 +1086,8 @@ def next_level():
 def spawn_player_callback(pos):
     global player, shield_end_time
     now = pygame.time.get_ticks()
-    player = Tank(pos[0], pos[1], is_player=True)
+    ### ИЗМЕНЕНИЕ: передаём upgrade_level=player_upgrade_level
+    player = Tank(pos[0], pos[1], is_player=True, upgrade_level=player_upgrade_level)
     # Включаем защитное поле на 4 секунды после появления
     player.shield_active = True
     player.shield_start = now
@@ -1132,7 +1299,7 @@ def main_menu():
     slide_duration = 1000
     menu_start_time = pygame.time.get_ticks()
     selection_index = 0
-    indicator_sprite = player_sprites["right"][0]
+    indicator_sprite = player_sprites_level1["right"][0]
     indicator_rect = indicator_sprite.get_rect()
     clock = pygame.time.Clock()
     selected_mode = None
@@ -1393,8 +1560,13 @@ while True:
                     print("Усиление штаба активировано (заглушка)")
                     bonus_channel.play(bonus_take_sound)
                 elif bonus.type == "tank_boost":
-                    # Заглушка для усиления танка
-                    print("Усиление танка активировано (заглушка)")
+                    ### ИЗМЕНЕНИЕ:
+                    # Увеличиваем глобальный уровень прокачки, но не выше 4
+                    player_upgrade_level = min(4, player_upgrade_level + 1)
+                    print("Уровень танка повышен до", player_upgrade_level)
+                    # Если игрок жив, сразу обновляем его параметры
+                    if player is not None:
+                        player.set_upgrade_level(player_upgrade_level)
                     bonus_channel.play(bonus_take_sound)
                 elif bonus.type == "grenade":
                     # Взрываем все вражеские танки (без начисления дополнительных очков)
@@ -1427,6 +1599,8 @@ while True:
                 player_sound_channel.stop()
                 current_player_sound = None
                 player_lives -= 1
+                ### ИЗМЕНЕНИЕ: сброс уровня прокачки на 1
+                player_upgrade_level = 1
                 if player_lives <= 0:
                     start_game_over_sequence()
 
