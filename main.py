@@ -141,85 +141,21 @@ def render_number(number):
     digits.reverse()
     return [number_sprites[d] for d in digits]
 
-# Спрайты для танков игрока
-# УРОВЕНЬ 1 (как ваш прежний player_sprites)
-player_sprites_level1 = {
-    "up": [
-        get_sprite(0, 0, 32, 32),
-        get_sprite(32, 0, 32, 32)
-    ],
-    "left": [
-        get_sprite(64, 0, 32, 32),
-        get_sprite(96, 0, 32, 32)
-    ],
-    "down": [
-        get_sprite(128, 0, 32, 32),
-        get_sprite(160, 0, 32, 32)
-    ],
-    "right": [
-        get_sprite(192, 0, 32, 32),
-        get_sprite(224, 0, 32, 32)
-    ]
-}
+# Функция для загрузки спрайтов танков
+def load_tank_sprites(y_offset):
+    return {
+        "up": [get_sprite(0, y_offset, 32, 32), get_sprite(32, y_offset, 32, 32)],
+        "left": [get_sprite(64, y_offset, 32, 32), get_sprite(96, y_offset, 32, 32)],
+        "down": [get_sprite(128, y_offset, 32, 32), get_sprite(160, y_offset, 32, 32)],
+        "right": [get_sprite(192, y_offset, 32, 32), get_sprite(224, y_offset, 32, 32)]
+    }
 
-# УРОВЕНЬ 2 (кадры на 32 пикселя ниже по Y, например, 0+32=32, 32+32=64, и т.д.)
-player_sprites_level2 = {
-    "up": [
-        get_sprite(0, 32, 32, 32),
-        get_sprite(32, 32, 32, 32)
-    ],
-    "left": [
-        get_sprite(64, 32, 32, 32),
-        get_sprite(96, 32, 32, 32)
-    ],
-    "down": [
-        get_sprite(128, 32, 32, 32),
-        get_sprite(160, 32, 32, 32)
-    ],
-    "right": [
-        get_sprite(192, 32, 32, 32),
-        get_sprite(224, 32, 32, 32)
-    ]
-}
-
-# УРОВЕНЬ 3 (сдвиг на 64 пикселя по Y)
-player_sprites_level3 = {
-    "up": [
-        get_sprite(0, 64, 32, 32),
-        get_sprite(32, 64, 32, 32)
-    ],
-    "left": [
-        get_sprite(64, 64, 32, 32),
-        get_sprite(96, 64, 32, 32)
-    ],
-    "down": [
-        get_sprite(128, 64, 32, 32),
-        get_sprite(160, 64, 32, 32)
-    ],
-    "right": [
-        get_sprite(192, 64, 32, 32),
-        get_sprite(224, 64, 32, 32)
-    ]
-}
-
-# УРОВЕНЬ 4 (сдвиг на 96 пикселей по Y)
-player_sprites_level4 = {
-    "up": [
-        get_sprite(0, 96, 32, 32),
-        get_sprite(32, 96, 32, 32)
-    ],
-    "left": [
-        get_sprite(64, 96, 32, 32),
-        get_sprite(96, 96, 32, 32)
-    ],
-    "down": [
-        get_sprite(128, 96, 32, 32),
-        get_sprite(160, 96, 32, 32)
-    ],
-    "right": [
-        get_sprite(192, 96, 32, 32),
-        get_sprite(224, 96, 32, 32)
-    ]
+# Использование словаря для хранения спрайтов танков
+player_sprites = {
+    1: load_tank_sprites(0),
+    2: load_tank_sprites(32),
+    3: load_tank_sprites(64),
+    4: load_tank_sprites(96)
 }
 
 enemy_sprites = {
@@ -387,11 +323,80 @@ popups = pygame.sprite.Group()
 obstacles = pygame.sprite.Group()
 forests = pygame.sprite.Group()          # Группа леса
 
+class BrickWallSegment(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        self.image = get_sprite(512, 0, 16, 16)
+        self.rect = self.image.get_rect(topleft=(x, y))
+        self.health = 4  # Сегмент может быть разрушен четырьмя попаданиями
+
+    def take_damage(self, bullet):
+        self.health -= 1
+        if self.health == 3:
+            # Разрушено 25% сегмента
+            if bullet.direction == "up":
+                self.image.fill((0, 0, 0), rect=pygame.Rect(0, 0, 16, 4), special_flags=pygame.BLEND_RGBA_SUB)
+            elif bullet.direction == "down":
+                self.image.fill((0, 0, 0), rect=pygame.Rect(0, 12, 16, 4), special_flags=pygame.BLEND_RGBA_SUB)
+            elif bullet.direction == "left":
+                self.image.fill((0, 0, 0), rect=pygame.Rect(0, 0, 4, 16), special_flags=pygame.BLEND_RGBA_SUB)
+            elif bullet.direction == "right":
+                self.image.fill((0, 0, 0), rect=pygame.Rect(12, 0, 4, 16), special_flags=pygame.BLEND_RGBA_SUB)
+        elif self.health == 2:
+            # Разрушено 50% сегмента
+            if bullet.direction == "up":
+                self.image.fill((0, 0, 0), rect=pygame.Rect(0, 0, 16, 8), special_flags=pygame.BLEND_RGBA_SUB)
+            elif bullet.direction == "down":
+                self.image.fill((0, 0, 0), rect=pygame.Rect(0, 8, 16, 8), special_flags=pygame.BLEND_RGBA_SUB)
+            elif bullet.direction == "left":
+                self.image.fill((0, 0, 0), rect=pygame.Rect(0, 0, 8, 16), special_flags=pygame.BLEND_RGBA_SUB)
+            elif bullet.direction == "right":
+                self.image.fill((0, 0, 0), rect=pygame.Rect(8, 0, 8, 16), special_flags=pygame.BLEND_RGBA_SUB)
+        elif self.health == 1:
+            # Разрушено 75% сегмента
+            if bullet.direction == "up":
+                self.image.fill((0, 0, 0), rect=pygame.Rect(0, 0, 16, 12), special_flags=pygame.BLEND_RGBA_SUB)
+            elif bullet.direction == "down":
+                self.image.fill((0, 0, 0), rect=pygame.Rect(0, 4, 16, 12), special_flags=pygame.BLEND_RGBA_SUB)
+            elif bullet.direction == "left":
+                self.image.fill((0, 0, 0), rect=pygame.Rect(0, 0, 12, 16), special_flags=pygame.BLEND_RGBA_SUB)
+            elif bullet.direction == "right":
+                self.image.fill((0, 0, 0), rect=pygame.Rect(4, 0, 12, 16), special_flags=pygame.BLEND_RGBA_SUB)
+        elif self.health <= 0:
+            obstacles.remove(self)  # Удаляем сегмент из группы препятствий
+            self.kill()
+            self.rect = pygame.Rect(0, 0, 0, 0)  # Обнуляем rect
+
 class BrickWall(pygame.sprite.Sprite):
     def __init__(self, x, y):
         super().__init__()
-        self.image = get_sprite(512, 0, 32, 32)
-        self.rect = self.image.get_rect(topleft=(x, y))
+        self.segments = [
+            BrickWallSegment(x, y),
+            BrickWallSegment(x + 16, y),
+            BrickWallSegment(x, y + 16),
+            BrickWallSegment(x + 16, y + 16)
+        ]
+        for segment in self.segments:
+            obstacles.add(segment)
+            all_sprites.add(segment)
+
+    def take_damage(self, bullet):
+        hit_segments = []
+        for segment in self.segments:
+            if segment.rect.collidepoint(bullet.rect.center):
+                hit_segments.append(segment)
+        if hit_segments:
+            # Сортируем сегменты в зависимости от направления пули
+            if bullet.direction == "up":
+                hit_segments.sort(key=lambda s: s.rect.bottom, reverse=True)
+            elif bullet.direction == "down":
+                hit_segments.sort(key=lambda s: s.rect.top)
+            elif bullet.direction == "left":
+                hit_segments.sort(key=lambda s: s.rect.right, reverse=True)
+            elif bullet.direction == "right":
+                hit_segments.sort(key=lambda s: s.rect.left)
+            # Повреждаем ближайший сегмент по направлению пули
+            hit_segments[0].take_damage(bullet)
 
 def place_random_brick_wall():
     all_cells = []
@@ -421,9 +426,7 @@ def place_random_brick_wall():
         chosen_col, chosen_row = random.choice(valid_cells)
         x = LEFT_MARGIN + chosen_col * CELL_SIZE
         y = TOP_MARGIN + chosen_row * CELL_SIZE
-        brick = BrickWall(x, y)
-        obstacles.add(brick)
-        all_sprites.add(brick)
+        brick_wall = BrickWall(x, y)
     else:
         print("No valid cell found for BrickWall!")
 
@@ -584,6 +587,9 @@ class SpawnAnimation(pygame.sprite.Sprite):
             self.callback(self.rect.center)
             self.kill()
 
+def check_collisions(sprite, group):
+    return pygame.sprite.spritecollide(sprite, group, False)
+
 # =========================
 # Класс Tank – базовый класс для танков (игрока и врагов)
 # =========================
@@ -596,7 +602,7 @@ class Tank(pygame.sprite.Sprite):
         # 1) Изначально задаём self.sprites чем-то, чтобы не получить AttributeError
         if is_player:
             # Например, уровень 1 по умолчанию
-            self.sprites = player_sprites_level1
+            self.sprites = player_sprites[1]
             self.speed = 3
         else:
             # Если враг – берём enemy_sprites
@@ -640,17 +646,7 @@ class Tank(pygame.sprite.Sprite):
 
     def set_upgrade_level(self, level):
         self.upgrade_level = level
-        
-        # 1) Выбираем готовый словарь спрайтов
-        if level == 1:
-            self.sprites = player_sprites_level1
-        elif level == 2:
-            self.sprites = player_sprites_level2
-        elif level == 3:
-            self.sprites = player_sprites_level3
-        elif level == 4:
-            self.sprites = player_sprites_level4
-
+        self.sprites = player_sprites[level]
         # 2) Меняем скорость пули и флаги
         if level == 1:
             self.bullet_speed = 10
@@ -713,10 +709,9 @@ class Tank(pygame.sprite.Sprite):
             # Ограничение движения в пределах игровой зоны
             self.rect.clamp_ip(FIELD_RECT)
             
-            for obstacle in obstacles:
-                if self.rect.colliderect(obstacle.rect):
-                    self.rect = old_rect
-                    break
+            for obstacle in check_collisions(self, obstacles):
+                self.rect = old_rect
+                break
 
             # Базовая проверка коллизий с другими танками
             for tank in tank_group:
@@ -954,7 +949,7 @@ class Enemy(Tank):
         global enemies_remaining_level
         enemies_remaining_level -= 1
 
-        # ### ИЗМЕНЕНИЕ: сразу создаём бонус (если танк был «специальным» и не тяжёлый),
+        # ### ИЗМЕНЕНИЕ: сразу создаём бонус (если танк был «специальным» and не тяжёлый),
         #   чтобы звук появления (bonus_appear_sound) проигрался моментально
         if self.is_special and self.enemy_type != 4 and not no_score:
             cols = GRID_COLS - 2
@@ -1074,6 +1069,11 @@ class Bullet(pygame.sprite.Sprite):
             explosion = HitExplosion(old_pos)
             explosions.add(explosion)
             all_sprites.add(explosion)
+            for hit in hits:
+                if isinstance(hit, BrickWallSegment):
+                    hit.take_damage(self)
+                elif isinstance(hit, BrickWall):
+                    hit.take_damage(self)
             self.kill()
             return
 
@@ -1285,6 +1285,7 @@ def level_transition(level):
     # --- Сокращение анимации закрытия до 600 мс (было 1200) ---
     #
     anim_duration = 600
+    
     start_anim = pygame.time.get_ticks()
     
     while True:
@@ -1370,7 +1371,6 @@ def level_transition(level):
 
 # =========================
 # Главное меню выбора режима (исправлено управление джойстиком)
-# =========================
 def main_menu():
     title_font = pygame.font.SysFont("consolas", 48, bold=True)
     option_font = pygame.font.SysFont("consolas", 32)
@@ -1395,7 +1395,7 @@ def main_menu():
     indicator_anim_index = 0
     last_indicator_anim_update = pygame.time.get_ticks()
     # Массив спрайтов танка для выбранного направления (например, "right")
-    indicator_sprites = player_sprites_level1["right"]
+    indicator_sprites = player_sprites[1]["right"]
 
     while selected_mode is None:
         now = pygame.time.get_ticks()
@@ -1537,16 +1537,7 @@ while True:
             # Кнопка Back (щит)
             elif event.button == 6 and not paused:  # Select/Back
                 if player is not None:
-                    player.shield_active = not player.shield_active
-                    player.shield_unlimited = True
-                    if player.shield_active:
-                        player.shield_start = pygame.time.get_ticks()
-                        shield_end_time = float('inf')
-                    else:
-                        shield_end_time = 0
-            # Остальные кнопки (только если не пауза)
-            elif not paused and player is not None and event.button != 6 and event.button != 7:
-                player.shoot()
+                    player.shoot()
     if not paused:
         now = pygame.time.get_ticks()
         # Спавн врагов
@@ -1624,6 +1615,7 @@ while True:
             bonus_hit = pygame.sprite.spritecollide(player, bonus_group, True)
             for bonus in bonus_hit:
                 # За взятие любого бонуса начисляем 500 очков
+
                 global_score += 500
 
                 # Обработка бонуса в зависимости от его типа
