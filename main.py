@@ -141,21 +141,85 @@ def render_number(number):
     digits.reverse()
     return [number_sprites[d] for d in digits]
 
-# Функция для загрузки спрайтов танков
-def load_tank_sprites(y_offset):
-    return {
-        "up": [get_sprite(0, y_offset, 32, 32), get_sprite(32, y_offset, 32, 32)],
-        "left": [get_sprite(64, y_offset, 32, 32), get_sprite(96, y_offset, 32, 32)],
-        "down": [get_sprite(128, y_offset, 32, 32), get_sprite(160, y_offset, 32, 32)],
-        "right": [get_sprite(192, y_offset, 32, 32), get_sprite(224, y_offset, 32, 32)]
-    }
+# Спрайты для танков игрока
+# УРОВЕНЬ 1 (как ваш прежний player_sprites)
+player_sprites_level1 = {
+    "up": [
+        get_sprite(0, 0, 32, 32),
+        get_sprite(32, 0, 32, 32)
+    ],
+    "left": [
+        get_sprite(64, 0, 32, 32),
+        get_sprite(96, 0, 32, 32)
+    ],
+    "down": [
+        get_sprite(128, 0, 32, 32),
+        get_sprite(160, 0, 32, 32)
+    ],
+    "right": [
+        get_sprite(192, 0, 32, 32),
+        get_sprite(224, 0, 32, 32)
+    ]
+}
 
-# Использование словаря для хранения спрайтов танков
-player_sprites = {
-    1: load_tank_sprites(0),
-    2: load_tank_sprites(32),
-    3: load_tank_sprites(64),
-    4: load_tank_sprites(96)
+# УРОВЕНЬ 2 (кадры на 32 пикселя ниже по Y, например, 0+32=32, 32+32=64, и т.д.)
+player_sprites_level2 = {
+    "up": [
+        get_sprite(0, 32, 32, 32),
+        get_sprite(32, 32, 32, 32)
+    ],
+    "left": [
+        get_sprite(64, 32, 32, 32),
+        get_sprite(96, 32, 32, 32)
+    ],
+    "down": [
+        get_sprite(128, 32, 32, 32),
+        get_sprite(160, 32, 32, 32)
+    ],
+    "right": [
+        get_sprite(192, 32, 32, 32),
+        get_sprite(224, 32, 32, 32)
+    ]
+}
+
+# УРОВЕНЬ 3 (сдвиг на 64 пикселя по Y)
+player_sprites_level3 = {
+    "up": [
+        get_sprite(0, 64, 32, 32),
+        get_sprite(32, 64, 32, 32)
+    ],
+    "left": [
+        get_sprite(64, 64, 32, 32),
+        get_sprite(96, 64, 32, 32)
+    ],
+    "down": [
+        get_sprite(128, 64, 32, 32),
+        get_sprite(160, 64, 32, 32)
+    ],
+    "right": [
+        get_sprite(192, 64, 32, 32),
+        get_sprite(224, 64, 32, 32)
+    ]
+}
+
+# УРОВЕНЬ 4 (сдвиг на 96 пикселей по Y)
+player_sprites_level4 = {
+    "up": [
+        get_sprite(0, 96, 32, 32),
+        get_sprite(32, 96, 32, 32)
+    ],
+    "left": [
+        get_sprite(64, 96, 32, 32),
+        get_sprite(96, 96, 32, 32)
+    ],
+    "down": [
+        get_sprite(128, 96, 32, 32),
+        get_sprite(160, 96, 32, 32)
+    ],
+    "right": [
+        get_sprite(192, 96, 32, 32),
+        get_sprite(224, 96, 32, 32)
+    ]
 }
 
 enemy_sprites = {
@@ -323,156 +387,203 @@ popups = pygame.sprite.Group()
 obstacles = pygame.sprite.Group()
 forests = pygame.sprite.Group()          # Группа леса
 
-class BrickWallSegment(pygame.sprite.Sprite):
+class BrickWall(pygame.sprite.Sprite):
     def __init__(self, x, y):
         """
-        Кирпичный блок 32×32, который может разрушаться полосками.
-        Для попаданий, приходящих с разных сторон, ведётся учёт повреждений:
-          • при попадании по верхней/нижней стороне (пуля летит вертикально)
-            удаляется горизонтальная полоса – 32×8 (при центральном попадании) или 16×8 (при попадании по углу);
-          • при попадании по левой/правой стороне (пуля летит горизонтально)
-            удаляется вертикальная полоса – 8×32 (при центральном попадании) или 8×16 (при ударе по углу).
-        Для каждого направления damage хранится в единицах «полос» (каждая полоса – 8 пикселей).
-        Максимальное разрушение с каждой стороны – 2 полос (то есть 16 пикселей).
+        Блок кирпичной стены 32×32, состоящий из 4 ячеек по 16×16.
+        Базовый спрайт берётся из spritesheet с координатами (512,128).
+
+        Для каждой ячейки (обозначаемой как "tl", "tr", "bl", "br")
+        храним:
+          • "damage" – количество нанесённого урона (0 = целая, 16 = полностью уничтожена);
+          • "side" – сторона, с которой стерта часть спрайта.
+          
+        При попадании пули (без привязки к bullet.direction) вычисляется положение удара
+        относительно всего блока, затем определяется, какие столбцы и ряды затронуты.
+        Для каждой затронутой ячейки внутри её локальной системы координат (с центром в (8,8))
+        вычисляется, с какой стороны произошло попадание – эта сторона записывается в "side".
+        Каждый удар наносит 8 единиц урона (то есть 2 удара полностью уничтожают ячейку).
+        Если попадание происходит на границе (|координата – 16| ≤ threshold), затрагиваются обе ячейки в данном измерении.
+        Нет никаких ограничений – урон идёт только по ячейкам, в которые попала пуля.
         """
         super().__init__()
         self.rect = pygame.Rect(x, y, 32, 32)
-        self.full_image = get_sprite(512, 0, 32, 32)
-        # damage-счетчики (в единицах «полос», каждая полоса = 8px)
-        self.horiz_damage_top = 0.0    # повреждено сверху (при попадании снаружи сверху)
-        self.horiz_damage_bottom = 0.0  # повреждено снизу
-        self.vert_damage_left = 0.0     # повреждено слева
-        self.vert_damage_right = 0.0    # повреждено справа
-        self.update_image()
-    
-    def update_image(self):
-        """
-        Пересчитываем изображение кирпичного блока с учётом накопленных повреждений.
-        Вычисляем оставшийся прямоугольник: отступы слева и сверху – damage*8 пикселей;
-        ширина = 32 – (damage_left + damage_right)*8, высота = 32 – (damage_top + damage_bottom)*8.
-        Если оставшаяся область слишком мала, блок считается полностью разрушенным.
-        После формирования нового изображения пересчитывается маска для точной коллизии.
-        """
-        left = int(self.vert_damage_left * 8)
-        top = int(self.horiz_damage_top * 8)
-        right = 32 - int(self.vert_damage_right * 8)
-        bottom = 32 - int(self.horiz_damage_bottom * 8)
-        width = right - left
-        height = bottom - top
-        if width <= 0 or height <= 0:
-            # Блок полностью разрушен
-            self.image = pygame.Surface((32, 32), pygame.SRCALPHA)
-            self.kill()
-            return
-        self.image = pygame.Surface((32, 32), pygame.SRCALPHA)
-        remaining = self.full_image.subsurface(pygame.Rect(left, top, width, height))
-        # Рисуем оставшуюся часть в исходном положении (с тем же отступом)
-        self.image.blit(remaining, (left, top))
+        # Инициализируем 4 ячейки: верхняя левая ("tl"), верхняя правая ("tr"),
+        # нижняя левая ("bl") и нижняя правая ("br")
+        self.cells = {
+            "tl": {"damage": 0, "side": None},
+            "tr": {"damage": 0, "side": None},
+            "bl": {"damage": 0, "side": None},
+            "br": {"damage": 0, "side": None}
+        }
+        self.base_x = 512  # координата X базового спрайта в spritesheet
+        self.base_y = 128  # координата Y базового спрайта в spritesheet
+        self.image = self.build_image()
         self.mask = pygame.mask.from_surface(self.image)
-    
+
+    def build_image(self):
+        """
+        Собирает изображение блока (32×32) из 4 ячеек по 16×16.
+        Для каждой ячейки:
+          – Если damage == 0, отрисовывается полный спрайт (из (512,128));
+          – Если damage > 0, то с той стороны (значение "side") удаляется полоса шириной damage пикселей.
+            Например, если "side" == "left", то берётся субповерхность base_sprite с координат (damage, 0, 16-damage, 16)
+            и отрисовывается со смещением (damage, 0).
+          – Если damage ≥ 16, ячейка не отрисовывается.
+        Все 4 ячейки компонуются в поверхность 32×32.
+        """
+        wall_surf = pygame.Surface((32, 32), pygame.SRCALPHA)
+        positions = {
+            "tl": (0, 0),
+            "tr": (16, 0),
+            "bl": (0, 16),
+            "br": (16, 16)
+        }
+        base_sprite = get_sprite(self.base_x, self.base_y, 16, 16)
+        for key, pos in positions.items():
+            cell = self.cells[key]
+            if cell["damage"] >= 16:
+                continue  # ячейка полностью уничтожена – не отрисовываем её
+            cell_surf = pygame.Surface((16, 16), pygame.SRCALPHA)
+            if cell["damage"] == 0 or cell["side"] is None:
+                cell_surf.blit(base_sprite, (0, 0))
+            else:
+                d = cell["damage"]
+                side = cell["side"]
+                if side == "left":
+                    # Стираем d пикселей с левого края
+                    remaining = base_sprite.subsurface((d, 0, 16 - d, 16))
+                    cell_surf.blit(remaining, (d, 0))
+                elif side == "right":
+                    # Стираем d пикселей с правого края
+                    remaining = base_sprite.subsurface((0, 0, 16 - d, 16))
+                    cell_surf.blit(remaining, (0, 0))
+                elif side == "top":
+                    # Стираем d пикселей с верха
+                    remaining = base_sprite.subsurface((0, d, 16, 16 - d))
+                    cell_surf.blit(remaining, (0, d))
+                elif side == "bottom":
+                    # Стираем d пикселей с низа
+                    remaining = base_sprite.subsurface((0, 0, 16, 16 - d))
+                    cell_surf.blit(remaining, (0, 0))
+                else:
+                    cell_surf.blit(base_sprite, (0, 0))
+            wall_surf.blit(cell_surf, pos)
+        return wall_surf
+
+    def update_image(self):
+        self.image = self.build_image()
+        self.mask = pygame.mask.from_surface(self.image)
+
     def take_damage(self, bullet):
         """
-        Определяет, какую полосу разрушить, в зависимости от направления полёта пули
-        и места попадания внутри блока.
-        
-        Алгоритм:
-          1. Определяем локальные координаты попадания (относительно верхнего левого угла блока).
-          2. С помощью bullet.direction вычисляем «сторону удара»: при пули, летящей вверх,
-             удар происходит по нижней стороне блока, при вниз – по верхней, при влево – по правой,
-             при вправо – по левой.
-          3. Для попаданий с вертикальной ориентацией (удар сверху/снизу):
-             если координата X попадания находится в центральном диапазоне (от 8 до 24),
-             то засчитываем «центральный» удар (полная полоса – 32×8), иначе – удар по углу (половина полосы – 16×8).
-          4. Аналогично для попаданий с горизонтальной ориентацией (слева/справа):
-             если координата Y попадания в диапазоне [8, 24], то центральный удар (полная полоса – 8×32),
-             иначе – удар по углу (половина полосы – 8×16).
-          5. При попадании обновляем соответствующий damage-счетчик (максимум 2.0, то есть 16 пикселей),
-             затем вызываем update_image() и возвращаем True, если что-то изменилось.
+        Обрабатывает попадание пули в блок кирпичной стены.
+
+        1. Вычисляем положение попадания пули относительно верхнего левого угла блока:
+             local_x = bullet.rect.centerx - self.rect.x
+             local_y = bullet.rect.centery - self.rect.y
+           (Оба значения лежат в диапазоне [0,32).)
+        2. Определяем, какие столбцы затронуты:
+             – Если local_x < 16 - threshold, то только левая колонка;
+             – Если local_x > 16 + threshold, то только правая колонка;
+             – Иначе (|local_x - 16| ≤ threshold) – обе.
+        3. Аналогично определяем затронутые ряды:
+             – Если local_y < 16 - threshold, то только верхний ряд;
+             – Если local_y > 16 + threshold, то только нижний ряд;
+             – Иначе – оба.
+        4. Affected_cells = декартово произведение затронутых столбцов и рядов:
+             • "left" + "top" → "tl", "right" + "top" → "tr", "left" + "bottom" → "bl", "right" + "bottom" → "br".
+        5. Для каждой затронутой ячейки вычисляем её локальные координаты:
+             Пусть cell_origin_x = 0 для ячеек левого столбца, 16 для правых;
+                 cell_origin_y = 0 для верхних, 16 для нижних.
+             Тогда cell_local_x = local_x - cell_origin_x, cell_local_y = local_y - cell_origin_y.
+             Центр каждой ячейки равен (8,8).
+        6. Вычисляем dx = cell_local_x - 8, dy = cell_local_y - 8. Если |dx| ≥ |dy|, то удар считается горизонтальным:
+             – Если dx < 0, то для данной ячейки hit_side = "left"; иначе hit_side = "right".
+           Если |dy| > |dx|, то удар вертикальный:
+             – Если dy < 0, hit_side = "top"; иначе hit_side = "bottom".
+        7. Для каждой затронутой ячейки обновляем:
+             • Устанавливаем cell["side"] = hit_side (то есть, та часть ячейки, куда прилетела пуля, будет стираться).
+             • Увеличиваем cell["damage"] на 8 (но не более 16).
+        8. Обновляем изображение; если все 4 ячейки имеют damage ≥ 16, удаляем блок.
+        Метод всегда возвращает True (пуля уничтожается).
         """
-        # Вычисляем координаты попадания относительно блока
         local_x = bullet.rect.centerx - self.rect.x
         local_y = bullet.rect.centery - self.rect.y
-        # Определяем сторону удара (используем обратное направление движения пули):
-        if bullet.direction == "up":
-            impact_side = "bottom"   # пуля летит вверх, удар происходит снизу
-        elif bullet.direction == "down":
-            impact_side = "top"
-        elif bullet.direction == "left":
-            impact_side = "right"
-        elif bullet.direction == "right":
-            impact_side = "left"
+        threshold = 4
+        damage_value = 8
+        updated = False
+
+        # Определяем, какие столбцы затронуты:
+        if local_x < 16 - threshold:
+            affected_columns = ["left"]
+        elif local_x > 16 + threshold:
+            affected_columns = ["right"]
         else:
-            impact_side = None
+            affected_columns = ["left", "right"]
 
-        # Порог для определения «центральности» удара (в пикселях)
-        threshold = 8
+        # Определяем, какие ряды затронуты:
+        if local_y < 16 - threshold:
+            affected_rows = ["top"]
+        elif local_y > 16 + threshold:
+            affected_rows = ["bottom"]
+        else:
+            affected_rows = ["top", "bottom"]
 
-        # Если удар по верхней/нижней стороне (горизонтальное разрушение)
-        if impact_side in ("top", "bottom"):
-            # Для верхней стороны расстояние от верхнего края, для нижней – от нижнего края
-            side_distance = local_y if impact_side == "top" else (32 - local_y)
-            # Если по оси X попадание центральное, считаем удар центральным (полная полоса 32×8)
-            if 8 <= local_x <= 24:
-                damage = 1.0
+        # Определяем affected_cells (ключи: "tl", "tr", "bl", "br")
+        affected_cells = []
+        for col in affected_columns:
+            for row in affected_rows:
+                if col == "left" and row == "top":
+                    affected_cells.append("tl")
+                elif col == "right" and row == "top":
+                    affected_cells.append("tr")
+                elif col == "left" and row == "bottom":
+                    affected_cells.append("bl")
+                elif col == "right" and row == "bottom":
+                    affected_cells.append("br")
+
+        # Для каждой затронутой ячейки определяем сторону удара внутри неё
+        for cell_key in affected_cells:
+            # Определяем координаты начала данной ячейки внутри блока:
+            cell_origin_x = 0 if cell_key in ["tl", "bl"] else 16
+            cell_origin_y = 0 if cell_key in ["tl", "tr"] else 16
+            cell_local_x = local_x - cell_origin_x
+            cell_local_y = local_y - cell_origin_y
+            # Центр ячейки равен (8,8)
+            dx = cell_local_x - 8
+            dy = cell_local_y - 8
+            if abs(dx) >= abs(dy):
+                hit_side = "left" if dx < 0 else "right"
             else:
-                damage = 0.5
-            if side_distance <= (threshold + 4):
-                if impact_side == "top":
-                    if self.horiz_damage_top < 2.0:
-                        self.horiz_damage_top += damage
-                        if self.horiz_damage_top > 2.0:
-                            self.horiz_damage_top = 2.0
-                        self.update_image()
-                        return True
-                else:  # impact_side == "bottom"
-                    if self.horiz_damage_bottom < 2.0:
-                        self.horiz_damage_bottom += damage
-                        if self.horiz_damage_bottom > 2.0:
-                            self.horiz_damage_bottom = 2.0
-                        self.update_image()
-                        return True
-            return False
+                hit_side = "top" if dy < 0 else "bottom"
+            cell = self.cells[cell_key]
+            if cell["damage"] < 16:
+                cell["side"] = hit_side  # всегда записываем сторону удара по данной ячейке
+                cell["damage"] = min(cell["damage"] + damage_value, 16)
+                updated = True
 
-        # Если удар по левой/правой стороне (вертикальное разрушение)
-        elif impact_side in ("left", "right"):
-            side_distance = local_x if impact_side == "left" else (32 - local_x)
-            if 8 <= local_y <= 24:
-                damage = 1.0
-            else:
-                damage = 0.5
-            if side_distance <= (threshold + 4):
-                if impact_side == "left":
-                    if self.vert_damage_left < 2.0:
-                        self.vert_damage_left += damage
-                        if self.vert_damage_left > 2.0:
-                            self.vert_damage_left = 2.0
-                        self.update_image()
-                        return True
-                else:  # impact_side == "right"
-                    if self.vert_damage_right < 2.0:
-                        self.vert_damage_right += damage
-                        if self.vert_damage_right > 2.0:
-                            self.vert_damage_right = 2.0
-                        self.update_image()
-                        return True
-            return False
-
-        return False
+        if updated:
+            self.update_image()
+        if all(self.cells[k]["damage"] >= 16 for k in self.cells):
+            self.kill()
+        return True
 
     def collides_with_point(self, point):
         """
-        Тест коллизии по пиксельной маске: возвращает True,
-        если по данной экранной точке (point) присутствует непрозрачный пиксель.
+        Возвращает True, если заданная точка (в экранных координатах) попадает в видимую часть блока.
         """
         local_x = point[0] - self.rect.x
         local_y = point[1] - self.rect.y
-        if local_x < 0 or local_x >= 32 or local_y < 0 or local_y >= 32:
+        try:
+            return self.mask.get_at((int(local_x), int(local_y))) != 0
+        except IndexError:
             return False
-        return self.mask.get_at((int(local_x), int(local_y))) != 0
 
     def draw(self, surface):
         surface.blit(self.image, self.rect.topleft)
 
+# Создание случайного кирпичного блока
 def place_random_brick_wall():
     all_cells = []
     for col in range(GRID_COLS):
@@ -501,7 +612,9 @@ def place_random_brick_wall():
         chosen_col, chosen_row = random.choice(valid_cells)
         x = LEFT_MARGIN + chosen_col * CELL_SIZE
         y = TOP_MARGIN + chosen_row * CELL_SIZE
-        brick_wall = BrickWall(x, y)
+        brick = BrickWall(x, y)
+        obstacles.add(brick)
+        all_sprites.add(brick)
     else:
         print("No valid cell found for BrickWall!")
 
@@ -662,9 +775,6 @@ class SpawnAnimation(pygame.sprite.Sprite):
             self.callback(self.rect.center)
             self.kill()
 
-def check_collisions(sprite, group):
-    return pygame.sprite.spritecollide(sprite, group, False)
-
 # =========================
 # Класс Tank – базовый класс для танков (игрока и врагов)
 # =========================
@@ -677,7 +787,7 @@ class Tank(pygame.sprite.Sprite):
         # 1) Изначально задаём self.sprites чем-то, чтобы не получить AttributeError
         if is_player:
             # Например, уровень 1 по умолчанию
-            self.sprites = player_sprites[1]
+            self.sprites = player_sprites_level1
             self.speed = 3
         else:
             # Если враг – берём enemy_sprites
@@ -721,7 +831,17 @@ class Tank(pygame.sprite.Sprite):
 
     def set_upgrade_level(self, level):
         self.upgrade_level = level
-        self.sprites = player_sprites[level]
+        
+        # 1) Выбираем готовый словарь спрайтов
+        if level == 1:
+            self.sprites = player_sprites_level1
+        elif level == 2:
+            self.sprites = player_sprites_level2
+        elif level == 3:
+            self.sprites = player_sprites_level3
+        elif level == 4:
+            self.sprites = player_sprites_level4
+
         # 2) Меняем скорость пули и флаги
         if level == 1:
             self.bullet_speed = 10
@@ -785,9 +905,17 @@ class Tank(pygame.sprite.Sprite):
             self.rect.clamp_ip(FIELD_RECT)
             
             for obstacle in obstacles:
-                if self.rect.colliderect(obstacle.rect):
-                    self.rect = old_rect
-                    break
+                if hasattr(obstacle, 'mask'):
+                    # Вычисляем маску для танка на основе его текущего изображения
+                    tank_mask = pygame.mask.from_surface(self.image)
+                    offset = (obstacle.rect.x - self.rect.x, obstacle.rect.y - self.rect.y)
+                    if tank_mask.overlap(obstacle.mask, offset):
+                        self.rect = old_rect
+                        break
+                else:
+                    if self.rect.colliderect(obstacle.rect):
+                        self.rect = old_rect
+                        break
 
             # Базовая проверка коллизий с другими танками
             for tank in tank_group:
@@ -1025,7 +1153,7 @@ class Enemy(Tank):
         global enemies_remaining_level
         enemies_remaining_level -= 1
 
-        # ### ИЗМЕНЕНИЕ: сразу создаём бонус (если танк был «специальным» and не тяжёлый),
+        # ### ИЗМЕНЕНИЕ: сразу создаём бонус (если танк был «специальным» и не тяжёлый),
         #   чтобы звук появления (bonus_appear_sound) проигрался моментально
         if self.is_special and self.enemy_type != 4 and not no_score:
             cols = GRID_COLS - 2
@@ -1138,13 +1266,20 @@ class Bullet(pygame.sprite.Sprite):
         # Проверяем столкновение с препятствиями с использованием collide_mask
         hits = pygame.sprite.spritecollide(self, obstacles, False, pygame.sprite.collide_mask)
         if hits:
-            if self.owner == "player":
-                wall_sound.play()
-            explosion = HitExplosion(old_pos)
-            explosions.add(explosion)
-            all_sprites.add(explosion)
-            self.kill()
-            return
+            for obstacle in hits:
+                if isinstance(obstacle, BrickWall):
+                    # Если центр пули попадает в неразрушенную часть кирпичной стены
+                    if obstacle.collides_with_point(self.rect.center):
+                        if obstacle.take_damage(self):
+                            explosion = HitExplosion(old_pos)
+                            explosions.add(explosion)
+                            all_sprites.add(explosion)
+                            self.kill()
+                            return
+                else:
+                    # Для прочих препятствий просто убираем пулю (без звука)
+                    self.kill()
+                    return
 
         # Если пуля уходит за пределы игрового поля,
         # то для пуль игрока проигрываем звук, для вражеских — нет
@@ -1354,7 +1489,6 @@ def level_transition(level):
     # --- Сокращение анимации закрытия до 600 мс (было 1200) ---
     #
     anim_duration = 600
-    
     start_anim = pygame.time.get_ticks()
     
     while True:
@@ -1440,6 +1574,7 @@ def level_transition(level):
 
 # =========================
 # Главное меню выбора режима (исправлено управление джойстиком)
+# =========================
 def main_menu():
     title_font = pygame.font.SysFont("consolas", 48, bold=True)
     option_font = pygame.font.SysFont("consolas", 32)
@@ -1464,7 +1599,7 @@ def main_menu():
     indicator_anim_index = 0
     last_indicator_anim_update = pygame.time.get_ticks()
     # Массив спрайтов танка для выбранного направления (например, "right")
-    indicator_sprites = player_sprites[1]["right"]
+    indicator_sprites = player_sprites_level1["right"]
 
     while selected_mode is None:
         now = pygame.time.get_ticks()
@@ -1588,6 +1723,8 @@ while True:
                         shield_end_time = 0
                 if event.key == pygame.K_F2:
                     show_grid = not show_grid
+                if event.key == pygame.K_F3:
+                    place_random_brick_wall()
         if event.type == pygame.JOYHATMOTION:
             # Получаем значение D-pad:
             hat = event.value  # tuple (x, y)
@@ -1606,7 +1743,16 @@ while True:
             # Кнопка Back (щит)
             elif event.button == 6 and not paused:  # Select/Back
                 if player is not None:
-                    player.shoot()
+                    player.shield_active = not player.shield_active
+                    player.shield_unlimited = True
+                    if player.shield_active:
+                        player.shield_start = pygame.time.get_ticks()
+                        shield_end_time = float('inf')
+                    else:
+                        shield_end_time = 0
+            # Остальные кнопки (только если не пауза)
+            elif not paused and player is not None and event.button != 6 and event.button != 7:
+                player.shoot()
     if not paused:
         now = pygame.time.get_ticks()
         # Спавн врагов
