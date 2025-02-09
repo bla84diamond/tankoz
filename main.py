@@ -36,6 +36,17 @@ time_stop_rumble_next = 0    # время (pygame.time.get_ticks()), когда 
 armor_rumble_next = 0        # то же для бонуса "armor"
 
 # =========================
+# Глобальные переменные уровня
+# =========================
+current_level = 1
+enemies_to_spawn = 20  # сколько ещё врагов предстоит появиться (из 20)
+enemies_remaining_level = 20  # сколько врагов осталось убить в этом уровне
+player_lives = 3
+game_over = False
+game_over_phase = 0  # 0 - движение спрайта, 1 - ожидание, 2 - переход в меню
+game_over_sprite = None
+
+# =========================
 # Константы размеров
 # =========================
 CELL_SIZE = 32
@@ -77,7 +88,7 @@ spritesheet = pygame.image.load("sprites.png").convert_alpha()
 # Функция вибрации на джойстике
 def do_rumble(low, high, duration_ms):
     """Вызывает вибрацию на геймпаде, если он есть, иначе ничего не делает."""
-    if joystick is not None:
+    if joystick is not None and enemies_remaining_level > 0:
         try:
             joystick.rumble(low, high, duration_ms)
         except NotImplementedError:
@@ -359,6 +370,7 @@ minus_armor_sound = pygame.mixer.Sound("sounds/minus_armor.ogg")
 bonus_appear_sound = pygame.mixer.Sound("sounds/bonus_appears.ogg")
 bonus_take_sound = pygame.mixer.Sound("sounds/bonus_take.ogg")
 bonus_life_sound = pygame.mixer.Sound("sounds/bonus_life.ogg")
+destroy_sound = pygame.mixer.Sound("sounds/destroy_wall.ogg")
 bonus_channel = pygame.mixer.Channel(1)  # Отдельный канал для бонусов
 current_player_sound = None  # звук "stand" не запускается, пока игрок не двигается
 
@@ -465,7 +477,7 @@ class BrickWall(pygame.sprite.Sprite):
     def take_damage(self, bullet):
         local_x = bullet.rect.centerx - self.rect.x
         local_y = bullet.rect.centery - self.rect.y
-        threshold = 4
+        threshold = 6
         damage_value = 8
         updated = False
         cells_to_damage = []
@@ -551,6 +563,8 @@ class BrickWall(pygame.sprite.Sprite):
                 updated = True
         
         if updated:
+            if bullet.owner == "player":
+                destroy_sound.play()
             self.update_image()
         if all(self.cells[k]["damage"] >= 16 for k in self.cells):
             self.kill()
@@ -1310,17 +1324,6 @@ def start_game_over_sequence():
         player.kill()
     player = None
     player_respawn_time = float('inf')
-
-# =========================
-# Глобальные переменные уровня
-# =========================
-current_level = 1
-enemies_to_spawn = 20  # сколько ещё врагов предстоит появиться (из 20)
-enemies_remaining_level = 20  # сколько врагов осталось убить в этом уровне
-player_lives = 3
-game_over = False
-game_over_phase = 0  # 0 - движение спрайта, 1 - ожидание, 2 - переход в меню
-game_over_sprite = None
 
 def update_grid_after_spawn():
     # При появлении нового врага выбираем первую ячейку (по порядку удаления) которая ещё True и устанавливаем False
