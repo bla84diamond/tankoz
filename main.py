@@ -387,51 +387,42 @@ popups = pygame.sprite.Group()
 obstacles = pygame.sprite.Group()
 forests = pygame.sprite.Group()          # Группа леса
 
+# =========================
+# Класс кирпичной стены
+# =========================
 class BrickWall(pygame.sprite.Sprite):
     def __init__(self, x, y):
         """
-        Блок кирпичной стены 32×32, состоящий из 4 ячеек по 16×16.
+        Блок кирпичной стены 32×32, состоящий из 4 субспрайтов (ячейки) по 16×16.
         Базовый спрайт берётся из spritesheet с координатами (512,128).
 
-        Для каждой ячейки (обозначаемой как "tl", "tr", "bl", "br")
-        храним:
-          • "damage" – количество нанесённого урона (0 = целая, 16 = полностью уничтожена);
-          • "side" – сторона, с которой стерта часть спрайта.
-          
-        При попадании пули (без привязки к bullet.direction) вычисляется положение удара
-        относительно всего блока, затем определяется, какие столбцы и ряды затронуты.
-        Для каждой затронутой ячейки внутри её локальной системы координат (с центром в (8,8))
-        вычисляется, с какой стороны произошло попадание – эта сторона записывается в "side".
-        Каждый удар наносит 8 единиц урона (то есть 2 удара полностью уничтожают ячейку).
-        Если попадание происходит на границе (|координата – 16| ≤ threshold), затрагиваются обе ячейки в данном измерении.
-        Нет никаких ограничений – урон идёт только по ячейкам, в которые попала пуля.
+        Для каждой ячейки (ключи: "tl", "tr", "bl", "br") храним:
+          • "damage" – текущее количество повреждения (0 = целый, 16 = полностью уничтожён);
+          • "side" – сторона, с которой производится стирание ("left", "right", "top", "bottom").
+
+        Каждый выстрел наносит 8 единиц урона.
+        При попадании:
+          – Горизонтальные выстрелы: если bullet.direction == "left", считается, что пуля пришла с правой стороны,
+            поэтому повреждаются субспрайты правого столбца; если bullet.direction == "right" – повреждаются субспрайты левого столбца.
+          – Вертикальные выстрелы: если bullet.direction in ("top", "up"), считается, что пуля пришла с низа,
+            поэтому повреждаются субспрайты нижнего ряда (дефолт); если bullet.direction in ("bottom", "down") – повреждаются субспрайты верхнего ряда.
+        Если попадание происходит в зоне границы (|координата – 16| ≤ threshold), выбирается одна ячейка; иначе – обе.
+        fallback используется, если дефолтный субспрайт уже уничтожен – при вертикальных попаданиях fallback выбирается из той же колонки, но из противоположного ряда.
         """
         super().__init__()
         self.rect = pygame.Rect(x, y, 32, 32)
-        # Инициализируем 4 ячейки: верхняя левая ("tl"), верхняя правая ("tr"),
-        # нижняя левая ("bl") и нижняя правая ("br")
         self.cells = {
             "tl": {"damage": 0, "side": None},
             "tr": {"damage": 0, "side": None},
             "bl": {"damage": 0, "side": None},
             "br": {"damage": 0, "side": None}
         }
-        self.base_x = 512  # координата X базового спрайта в spritesheet
-        self.base_y = 128  # координата Y базового спрайта в spritesheet
+        self.base_x = 512
+        self.base_y = 128
         self.image = self.build_image()
         self.mask = pygame.mask.from_surface(self.image)
-
+    
     def build_image(self):
-        """
-        Собирает изображение блока (32×32) из 4 ячеек по 16×16.
-        Для каждой ячейки:
-          – Если damage == 0, отрисовывается полный спрайт (из (512,128));
-          – Если damage > 0, то с той стороны (значение "side") удаляется полоса шириной damage пикселей.
-            Например, если "side" == "left", то берётся субповерхность base_sprite с координат (damage, 0, 16-damage, 16)
-            и отрисовывается со смещением (damage, 0).
-          – Если damage ≥ 16, ячейка не отрисовывается.
-        Все 4 ячейки компонуются в поверхность 32×32.
-        """
         wall_surf = pygame.Surface((32, 32), pygame.SRCALPHA)
         positions = {
             "tl": (0, 0),
@@ -443,7 +434,7 @@ class BrickWall(pygame.sprite.Sprite):
         for key, pos in positions.items():
             cell = self.cells[key]
             if cell["damage"] >= 16:
-                continue  # ячейка полностью уничтожена – не отрисовываем её
+                continue  # субспрайт полностью уничтожен
             cell_surf = pygame.Surface((16, 16), pygame.SRCALPHA)
             if cell["damage"] == 0 or cell["side"] is None:
                 cell_surf.blit(base_sprite, (0, 0))
@@ -451,135 +442,128 @@ class BrickWall(pygame.sprite.Sprite):
                 d = cell["damage"]
                 side = cell["side"]
                 if side == "left":
-                    # Стираем d пикселей с левого края
                     remaining = base_sprite.subsurface((d, 0, 16 - d, 16))
                     cell_surf.blit(remaining, (d, 0))
                 elif side == "right":
-                    # Стираем d пикселей с правого края
                     remaining = base_sprite.subsurface((0, 0, 16 - d, 16))
                     cell_surf.blit(remaining, (0, 0))
                 elif side == "top":
-                    # Стираем d пикселей с верха
                     remaining = base_sprite.subsurface((0, d, 16, 16 - d))
                     cell_surf.blit(remaining, (0, d))
                 elif side == "bottom":
-                    # Стираем d пикселей с низа
                     remaining = base_sprite.subsurface((0, 0, 16, 16 - d))
                     cell_surf.blit(remaining, (0, 0))
                 else:
                     cell_surf.blit(base_sprite, (0, 0))
-            wall_surf.blit(cell_surf, pos)
+            wall_surf.blit(cell_surf, positions[key])
         return wall_surf
 
     def update_image(self):
         self.image = self.build_image()
         self.mask = pygame.mask.from_surface(self.image)
-
+    
     def take_damage(self, bullet):
-        """
-        Обрабатывает попадание пули в блок кирпичной стены.
-
-        1. Вычисляем положение попадания пули относительно верхнего левого угла блока:
-             local_x = bullet.rect.centerx - self.rect.x
-             local_y = bullet.rect.centery - self.rect.y
-           (Оба значения лежат в диапазоне [0,32).)
-        2. Определяем, какие столбцы затронуты:
-             – Если local_x < 16 - threshold, то только левая колонка;
-             – Если local_x > 16 + threshold, то только правая колонка;
-             – Иначе (|local_x - 16| ≤ threshold) – обе.
-        3. Аналогично определяем затронутые ряды:
-             – Если local_y < 16 - threshold, то только верхний ряд;
-             – Если local_y > 16 + threshold, то только нижний ряд;
-             – Иначе – оба.
-        4. Affected_cells = декартово произведение затронутых столбцов и рядов:
-             • "left" + "top" → "tl", "right" + "top" → "tr", "left" + "bottom" → "bl", "right" + "bottom" → "br".
-        5. Для каждой затронутой ячейки вычисляем её локальные координаты:
-             Пусть cell_origin_x = 0 для ячеек левого столбца, 16 для правых;
-                 cell_origin_y = 0 для верхних, 16 для нижних.
-             Тогда cell_local_x = local_x - cell_origin_x, cell_local_y = local_y - cell_origin_y.
-             Центр каждой ячейки равен (8,8).
-        6. Вычисляем dx = cell_local_x - 8, dy = cell_local_y - 8. Если |dx| ≥ |dy|, то удар считается горизонтальным:
-             – Если dx < 0, то для данной ячейки hit_side = "left"; иначе hit_side = "right".
-           Если |dy| > |dx|, то удар вертикальный:
-             – Если dy < 0, hit_side = "top"; иначе hit_side = "bottom".
-        7. Для каждой затронутой ячейки обновляем:
-             • Устанавливаем cell["side"] = hit_side (то есть, та часть ячейки, куда прилетела пуля, будет стираться).
-             • Увеличиваем cell["damage"] на 8 (но не более 16).
-        8. Обновляем изображение; если все 4 ячейки имеют damage ≥ 16, удаляем блок.
-        Метод всегда возвращает True (пуля уничтожается).
-        """
         local_x = bullet.rect.centerx - self.rect.x
         local_y = bullet.rect.centery - self.rect.y
         threshold = 4
         damage_value = 8
         updated = False
-
-        # Определяем, какие столбцы затронуты:
-        if local_x < 16 - threshold:
-            affected_columns = ["left"]
-        elif local_x > 16 + threshold:
-            affected_columns = ["right"]
-        else:
-            affected_columns = ["left", "right"]
-
-        # Определяем, какие ряды затронуты:
-        if local_y < 16 - threshold:
-            affected_rows = ["top"]
-        elif local_y > 16 + threshold:
-            affected_rows = ["bottom"]
-        else:
-            affected_rows = ["top", "bottom"]
-
-        # Определяем affected_cells (ключи: "tl", "tr", "bl", "br")
-        affected_cells = []
-        for col in affected_columns:
-            for row in affected_rows:
-                if col == "left" and row == "top":
-                    affected_cells.append("tl")
-                elif col == "right" and row == "top":
-                    affected_cells.append("tr")
-                elif col == "left" and row == "bottom":
-                    affected_cells.append("bl")
-                elif col == "right" and row == "bottom":
-                    affected_cells.append("br")
-
-        # Для каждой затронутой ячейки определяем сторону удара внутри неё
-        for cell_key in affected_cells:
-            # Определяем координаты начала данной ячейки внутри блока:
-            cell_origin_x = 0 if cell_key in ["tl", "bl"] else 16
-            cell_origin_y = 0 if cell_key in ["tl", "tr"] else 16
-            cell_local_x = local_x - cell_origin_x
-            cell_local_y = local_y - cell_origin_y
-            # Центр ячейки равен (8,8)
-            dx = cell_local_x - 8
-            dy = cell_local_y - 8
-            if abs(dx) >= abs(dy):
-                hit_side = "left" if dx < 0 else "right"
+        cells_to_damage = []
+        
+        # Горизонтальные выстрелы:
+        if bullet.direction in ("left", "right"):
+            if bullet.direction == "left":
+                # Пуля летит влево → пришла с правой стороны:
+                default_col = "right"
+                fallback_col = "left"
+                hit_side = "right"
+            else:  # bullet.direction == "right"
+                default_col = "left"
+                fallback_col = "right"
+                hit_side = "left"
+            if local_y < 16 - threshold:
+                rows = ["top"]
+            elif local_y > 16 + threshold:
+                rows = ["bottom"]
             else:
-                hit_side = "top" if dy < 0 else "bottom"
-            cell = self.cells[cell_key]
+                rows = ["top", "bottom"]
+            for row in rows:
+                if default_col == "left":
+                    default_key = "tl" if row == "top" else "bl"
+                    fallback_key = "tr" if row == "top" else "br"
+                else:
+                    default_key = "tr" if row == "top" else "br"
+                    fallback_key = "tl" if row == "top" else "bl"
+                if self.cells[default_key]["damage"] < 16:
+                    cells_to_damage.append(default_key)
+                elif self.cells[fallback_key]["damage"] < 16:
+                    cells_to_damage.append(fallback_key)
+        
+        # Вертикальные выстрелы:
+        elif bullet.direction in ("top", "up", "bottom", "down"):
+            if bullet.direction in ("top", "up"):
+                # Пуля летит вверх → пришла с низа, повреждаются нижние субспрайты
+                default_row = "bottom"
+                fallback_row = "top"
+                hit_side = "bottom"
+            else:
+                # Пуля летит вниз → пришла с верха, повреждаются верхние субспрайты
+                default_row = "top"
+                fallback_row = "bottom"
+                hit_side = "top"
+            if local_x < 16 - threshold:
+                cols = ["left"]
+            elif local_x > 16 + threshold:
+                cols = ["right"]
+            else:
+                cols = ["left", "right"]
+            for col in cols:
+                # Здесь изменяем fallback: выбираем fallback из той же колонки, то есть:
+                # Если col == "left": default_key = "bl" (если default_row == "bottom") или "tl" (если default_row == "top");
+                # fallback_key = "tl" (если default_row == "bottom") или "bl" (если default_row == "top").
+                if col == "left":
+                    if default_row == "bottom":
+                        default_key = "bl"
+                        fallback_key = "tl"
+                    else:
+                        default_key = "tl"
+                        fallback_key = "bl"
+                else:  # col == "right"
+                    if default_row == "bottom":
+                        default_key = "br"
+                        fallback_key = "tr"
+                    else:
+                        default_key = "tr"
+                        fallback_key = "br"
+                if self.cells[default_key]["damage"] < 16:
+                    cells_to_damage.append(default_key)
+                elif self.cells[fallback_key]["damage"] < 16:
+                    cells_to_damage.append(fallback_key)
+        else:
+            return True
+        
+        cells_to_damage = list(set(cells_to_damage))
+        for key in cells_to_damage:
+            cell = self.cells[key]
             if cell["damage"] < 16:
-                cell["side"] = hit_side  # всегда записываем сторону удара по данной ячейке
+                cell["side"] = hit_side
                 cell["damage"] = min(cell["damage"] + damage_value, 16)
                 updated = True
-
+        
         if updated:
             self.update_image()
         if all(self.cells[k]["damage"] >= 16 for k in self.cells):
             self.kill()
         return True
-
+    
     def collides_with_point(self, point):
-        """
-        Возвращает True, если заданная точка (в экранных координатах) попадает в видимую часть блока.
-        """
         local_x = point[0] - self.rect.x
         local_y = point[1] - self.rect.y
         try:
             return self.mask.get_at((int(local_x), int(local_y))) != 0
         except IndexError:
             return False
-
+    
     def draw(self, surface):
         surface.blit(self.image, self.rect.topleft)
 
