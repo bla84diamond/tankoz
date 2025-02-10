@@ -18,7 +18,7 @@ show_grid = True        # Видимость сетки
 # =========================
 # Глобальные переменные
 # =========================
-### ИЗМЕНЕНИЕ: глобальная переменная для уровня прокачки игрока (1..4)
+### Глобальная переменная для уровня прокачки игрока (1..4)
 player_upgrade_level = 1
 global_score = 0  # Добавлено для хранения очков
 bonus_active = False  # Флаг активного бонуса
@@ -371,6 +371,7 @@ bonus_appear_sound = pygame.mixer.Sound("sounds/bonus_appears.ogg")
 bonus_take_sound = pygame.mixer.Sound("sounds/bonus_take.ogg")
 bonus_life_sound = pygame.mixer.Sound("sounds/bonus_life.ogg")
 destroy_sound = pygame.mixer.Sound("sounds/destroy_wall.ogg")
+ice_sound = pygame.mixer.Sound("sounds/ice.ogg")
 bonus_channel = pygame.mixer.Channel(1)  # Отдельный канал для бонусов
 current_player_sound = None  # звук "stand" не запускается, пока игрок не двигается
 
@@ -651,26 +652,166 @@ class ConcreteWall(pygame.sprite.Sprite):
     def __init__(self, x, y, active_cells=("tl", "tr", "bl", "br")):
         """
         Шаблон блока бетонной стены, состоящего из 4 элементов 16x16.
-        Позже можно задать координаты спрайта и свойства поведения.
+        Элементы бетонного блока разрушаются только игроком, прокачанным до 4 уровня.
+        При попадании по бетонному блоку воспроизводится звук столкновения (как от стены вокруг поля)
+        и эффект взрыва. Если условия для разрушения выполнены, уничтожается один или несколько элементов
+        блока (аналогично кирпичным блокам).
         """
         super().__init__()
         self.active_cells = set(active_cells)
         self.rect = pygame.Rect(x, y, 32, 32)
         self.base_x = 512
         self.base_y = 144
+        # Инициализируем клетки для активных элементов
+        self.cells = {}
+        for key in ("tl", "tr", "bl", "br"):
+            if key in self.active_cells:
+                self.cells[key] = {"damage": 0, "side": None}
         self.image = self.build_image()
         self.mask = pygame.mask.from_surface(self.image)
-    
+
     def build_image(self):
         wall_surf = pygame.Surface((32, 32), pygame.SRCALPHA)
         positions = {"tl": (0, 0), "tr": (16, 0), "bl": (0, 16), "br": (16, 16)}
         base_sprite = get_sprite(self.base_x, self.base_y, 16, 16)
         for key, pos in positions.items():
-            if key in self.active_cells:
-                wall_surf.blit(base_sprite, pos)
+            if key not in self.active_cells:
+                continue
+            cell = self.cells[key]
+            if cell["damage"] >= 16:
+                continue  # элемент уничтожен
+            cell_surf = pygame.Surface((16, 16), pygame.SRCALPHA)
+            if cell["damage"] == 0 or cell["side"] is None:
+                cell_surf.blit(base_sprite, (0, 0))
+            else:
+                d = cell["damage"]
+                side = cell["side"]
+                if side == "left":
+                    remaining = base_sprite.subsurface((d, 0, 16 - d, 16))
+                    cell_surf.blit(remaining, (d, 0))
+                elif side == "right":
+                    remaining = base_sprite.subsurface((0, 0, 16 - d, 16))
+                    cell_surf.blit(remaining, (0, 0))
+                elif side == "top":
+                    remaining = base_sprite.subsurface((0, d, 16, 16 - d))
+                    cell_surf.blit(remaining, (0, d))
+                elif side == "bottom":
+                    remaining = base_sprite.subsurface((0, 0, 16, 16 - d))
+                    cell_surf.blit(remaining, (0, 0))
+                else:
+                    cell_surf.blit(base_sprite, (0, 0))
+            wall_surf.blit(cell_surf, positions[key])
         return wall_surf
-    
-    # Добавьте методы для взаимодействия с игроком и логики повреждений при необходимости
+
+    def update_image(self):
+        self.image = self.build_image()
+        self.mask = pygame.mask.from_surface(self.image)
+
+    def take_damage(self, bullet):
+        """
+        Обрабатывает попадание пули.
+        Если пуля выпущена игроком и глобальный уровень player_upgrade_level равен 4,
+        производится разрушение элемента (или элементов) бетонного блока, аналогично BrickWall.
+        В противном случае просто воспроизводится звук столкновения и эффект взрыва.
+        """
+        global player_upgrade_level
+        # Если игрок не прокачан до 4 уровня – просто проигрываем эффект столкновения
+        if not (bullet.owner == "player" and player_upgrade_level == 4):
+            wall_sound.play()
+            explosion = HitExplosion(bullet.rect.center)
+            explosions.add(explosion)
+            all_sprites.add(explosion)
+            return True
+
+        local_x = bullet.rect.centerx - self.rect.x
+        local_y = bullet.rect.centery - self.rect.y
+        threshold = 6
+        # Для бетонного блока используем полное разрушение элемента (damage_value = 16)
+        damage_value = 16
+        updated = False
+        cells_to_destroy = []
+
+        # Обработка горизонтальных попаданий
+        if bullet.direction in ("left", "right"):
+            if bullet.direction == "left":
+                default_col = "right"
+                fallback_col = "left"
+                hit_side = "right"
+            else:
+                default_col = "left"
+                fallback_col = "right"
+                hit_side = "left"
+            if local_y < 16 - threshold:
+                rows = ["top"]
+            elif local_y > 16 + threshold:
+                rows = ["bottom"]
+            else:
+                rows = ["top", "bottom"]
+            for row in rows:
+                if default_col == "left":
+                    default_key = "tl" if row == "top" else "bl"
+                    fallback_key = "tr" if row == "top" else "br"
+                else:
+                    default_key = "tr" if row == "top" else "br"
+                    fallback_key = "tl" if row == "top" else "bl"
+                if default_key in self.cells and self.cells[default_key]["damage"] < 16:
+                    cells_to_destroy.append(default_key)
+                elif fallback_key in self.cells and self.cells[fallback_key]["damage"] < 16:
+                    cells_to_destroy.append(fallback_key)
+
+        # Обработка вертикальных попаданий
+        elif bullet.direction in ("top", "up", "bottom", "down"):
+            if bullet.direction in ("top", "up"):
+                default_row = "bottom"
+                fallback_row = "top"
+                hit_side = "bottom"
+            else:
+                default_row = "top"
+                fallback_row = "bottom"
+                hit_side = "top"
+            if local_x < 16 - threshold:
+                cols = ["left"]
+            elif local_x > 16 + threshold:
+                cols = ["right"]
+            else:
+                cols = ["left", "right"]
+            for col in cols:
+                if col == "left":
+                    if default_row == "bottom":
+                        default_key = "bl"
+                        fallback_key = "tl"
+                    else:
+                        default_key = "tl"
+                        fallback_key = "bl"
+                else:
+                    if default_row == "bottom":
+                        default_key = "br"
+                        fallback_key = "tr"
+                    else:
+                        default_key = "tr"
+                        fallback_key = "br"
+                if default_key in self.cells and self.cells[default_key]["damage"] < 16:
+                    cells_to_destroy.append(default_key)
+                elif fallback_key in self.cells and self.cells[fallback_key]["damage"] < 16:
+                    cells_to_destroy.append(fallback_key)
+        else:
+            return True
+
+        # Удаляем повторения
+        cells_to_destroy = list(set(cells_to_destroy))
+        for key in cells_to_destroy:
+            if self.cells[key]["damage"] < 16:
+                self.cells[key]["damage"] = damage_value
+                self.cells[key]["side"] = hit_side
+                updated = True
+
+        if updated:
+            wall_sound.play()
+            self.update_image()
+        # Если все активные элементы уничтожены, удаляем объект
+        if all(self.cells[k]["damage"] >= 16 for k in self.cells):
+            self.kill()
+        return True
 
 # =========================
 # Класс водного блока (шаблон)
@@ -1039,8 +1180,10 @@ class Tank(pygame.sprite.Sprite):
     def update(self, input_keys):
         if self.is_alive and self.is_player:
             old_rect = self.rect.copy()
+            old_direction = self.direction  # Сохраняем предыдущее направление для сравнения
+
             self.is_moving = False
-            
+
             # Обработка управления
             if input_keys.get(pygame.K_UP) or input_keys.get(pygame.K_w):
                 self.last_key = pygame.K_UP
@@ -1053,7 +1196,7 @@ class Tank(pygame.sprite.Sprite):
             else:
                 self.last_key = None
 
-            # Движение
+            # Движение и обновление направления
             if self.last_key == pygame.K_UP:
                 self.rect.y -= self.speed
                 self.direction = "up"
@@ -1067,12 +1210,15 @@ class Tank(pygame.sprite.Sprite):
                 self.rect.x += self.speed
                 self.direction = "right"
 
-            # Ограничение движения в пределах игровой зоны
+            # Ограничиваем движение в пределах игровой зоны
             self.rect.clamp_ip(FIELD_RECT)
-            
+
+            # Проверка столкновения с препятствиями (включая воду, бетон, кирпич и т.д.)
             for obstacle in obstacles:
+                # Пропускаем лед – по льду танки могут ездить
+                if isinstance(obstacle, Ice):
+                    continue
                 if hasattr(obstacle, 'mask'):
-                    # Вычисляем маску для танка на основе его текущего изображения
                     tank_mask = pygame.mask.from_surface(self.image)
                     offset = (obstacle.rect.x - self.rect.x, obstacle.rect.y - self.rect.y)
                     if tank_mask.overlap(obstacle.mask, offset):
@@ -1083,6 +1229,29 @@ class Tank(pygame.sprite.Sprite):
                         self.rect = old_rect
                         break
 
+            # Обработка эффекта льда для игрока:
+            # Если танк пересекается с блоком льда, то при смене направления на противоположное
+            # воспроизводится звук и танк продолжает инерционное движение на 8 пикселей в ту же сторону.
+            on_ice = False
+            for obstacle in obstacles:
+                if isinstance(obstacle, Ice) and self.rect.colliderect(obstacle.rect):
+                    on_ice = True
+                    break
+
+            if on_ice:
+                opposite = {"up": "down", "down": "up", "left": "right", "right": "left"}
+                if old_direction in opposite and self.direction == opposite[old_direction]:
+                    # Воспроизводим звук льда
+                    ice_sound.play()
+                    # Продолжаем инерционное движение на 8 пикселей в выбранном направлении
+                    if self.direction == "up":
+                        self.rect.y -= 16
+                    elif self.direction == "down":
+                        self.rect.y += 16
+                    elif self.direction == "left":
+                        self.rect.x -= 16
+                    elif self.direction == "right":
+                        self.rect.x += 16
             # Базовая проверка коллизий с другими танками
             for tank in tank_group:
                 if tank != self and self.rect.colliderect(tank.rect):
@@ -1368,8 +1537,11 @@ class Enemy(Tank):
         self._animate()
 
         for obstacle in obstacles:
+            if isinstance(obstacle, Ice):
+                continue  # враги могут ездить по льду
             if self.rect.colliderect(obstacle.rect):
                 self.rect = old_rect
+                self.direction = random.choice(["up", "down", "left", "right"])
                 break
 
         # Если танк специальный (бонусный), переключаем спрайт с использованием бонусных спрайтов
@@ -1433,8 +1605,8 @@ class Bullet(pygame.sprite.Sprite):
         hits = pygame.sprite.spritecollide(self, obstacles, False, pygame.sprite.collide_mask)
         if hits:
             for obstacle in hits:
+                # Кирпичная стена – обрабатываем как прежде
                 if isinstance(obstacle, BrickWall):
-                    # Если центр пули попадает в неразрушенную часть кирпичной стены
                     if obstacle.collides_with_point(self.rect.center):
                         if obstacle.take_damage(self):
                             explosion = HitExplosion(old_pos)
@@ -1442,8 +1614,34 @@ class Bullet(pygame.sprite.Sprite):
                             all_sprites.add(explosion)
                             self.kill()
                             return
+
+                # Бетонная стена
+                elif isinstance(obstacle, ConcreteWall):
+                    # Если пуля от игрока и его уровень прокачки 4 – разрушаем элемент (аналогично кирпичной стене)
+                    if self.owner == "player" and player_upgrade_level == 4:
+                        if obstacle.take_damage(self):  # Реализуйте аналогичную логику take_damage для ConcreteWall
+                            explosion = HitExplosion(old_pos)
+                            explosions.add(explosion)
+                            all_sprites.add(explosion)
+                            self.kill()
+                            return
+                    # В противном случае — воспроизводим стандартный звук столкновения и эффект взрыва
+                    wall_sound.play()
+                    explosion = HitExplosion(old_pos)
+                    explosions.add(explosion)
+                    all_sprites.add(explosion)
+                    self.kill()
+                    return
+
+                # Вода – пулям разрешается лететь над препятствием, пропускаем его
+                elif isinstance(obstacle, Water):
+                    continue
+
+                # Лёд – пули пролетают над ним, игнорируем
+                elif isinstance(obstacle, Ice):
+                    continue
+
                 else:
-                    # Для прочих препятствий просто убираем пулю (без звука)
                     self.kill()
                     return
 
@@ -1883,6 +2081,10 @@ while True:
                     show_grid = not show_grid
                 if event.key == pygame.K_F3:
                     place_random_brick_wall()
+                    place_random_forest()
+                    place_random_concrete_wall()
+                    place_random_water()
+                    place_random_ice()
         if event.type == pygame.JOYHATMOTION:
             # Получаем значение D-pad:
             hat = event.value  # tuple (x, y)
@@ -1972,7 +2174,7 @@ while True:
         pygame.sprite.groupcollide(player_bullets, enemy_bullets, True, True)
         hits = pygame.sprite.groupcollide(player_bullets, enemies, True, False)
         for bullet, hit_enemies in hits.items():
-            # Новое: создаём короткую вспышку в месте попадания
+            # Создаём короткую вспышку в месте попадания
             explosion = HitExplosion(bullet.rect.center)
             explosions.add(explosion)
             all_sprites.add(explosion)
