@@ -402,35 +402,30 @@ forests = pygame.sprite.Group()          # Группа леса
 # =========================
 # Класс кирпичной стены
 # =========================
+# =========================
+# Класс кирпичной стены (блок)
+# =========================
 class BrickWall(pygame.sprite.Sprite):
-    def __init__(self, x, y):
+    def __init__(self, x, y, active_cells=("tl", "tr", "bl", "br")):
         """
-        Блок кирпичной стены 32×32, состоящий из 4 субспрайтов (ячейки) по 16×16.
-        Базовый спрайт берётся из spritesheet с координатами (512,128).
-
-        Для каждой ячейки (ключи: "tl", "tr", "bl", "br") храним:
-          • "damage" – текущее количество повреждения (0 = целый, 16 = полностью уничтожён);
-          • "side" – сторона, с которой производится стирание ("left", "right", "top", "bottom").
-
-        Каждый выстрел наносит 8 единиц урона.
-        При попадании:
-          – Горизонтальные выстрелы: если bullet.direction == "left", считается, что пуля пришла с правой стороны,
-            поэтому повреждаются субспрайты правого столбца; если bullet.direction == "right" – повреждаются субспрайты левого столбца.
-          – Вертикальные выстрелы: если bullet.direction in ("top", "up"), считается, что пуля пришла с низа,
-            поэтому повреждаются субспрайты нижнего ряда (дефолт); если bullet.direction in ("bottom", "down") – повреждаются субспрайты верхнего ряда.
-        Если попадание происходит в зоне границы (|координата – 16| ≤ threshold), выбирается одна ячейка; иначе – обе.
-        fallback используется, если дефолтный субспрайт уже уничтожен – при вертикальных попаданиях fallback выбирается из той же колонки, но из противоположного ряда.
+        Блок кирпичной стены, состоящий из 1, 2, 3 или 4 элементов 16x16.
+        По умолчанию создается полный блок (4 элемента) размером 32x32.
+        Спрайт для одного элемента находится по координатам (512,128).
+        
+        Логика повреждений остаётся прежней – для каждого активного элемента считается урон.
+        Если пуля попадает в область, где расположено два соседних элемента, урон наносится обоим.
         """
         super().__init__()
+        self.active_cells = set(active_cells)
+        # Для упрощения размер блока всегда 32x32 (даже если не все ячейки активны)
         self.rect = pygame.Rect(x, y, 32, 32)
-        self.cells = {
-            "tl": {"damage": 0, "side": None},
-            "tr": {"damage": 0, "side": None},
-            "bl": {"damage": 0, "side": None},
-            "br": {"damage": 0, "side": None}
-        }
         self.base_x = 512
         self.base_y = 128
+        # Инициализируем словарь клеток только для активных элементов
+        self.cells = {}
+        for key in ("tl", "tr", "bl", "br"):
+            if key in self.active_cells:
+                self.cells[key] = {"damage": 0, "side": None}
         self.image = self.build_image()
         self.mask = pygame.mask.from_surface(self.image)
     
@@ -444,9 +439,11 @@ class BrickWall(pygame.sprite.Sprite):
         }
         base_sprite = get_sprite(self.base_x, self.base_y, 16, 16)
         for key, pos in positions.items():
+            if key not in self.active_cells:
+                continue
             cell = self.cells[key]
             if cell["damage"] >= 16:
-                continue  # субспрайт полностью уничтожен
+                continue  # элемент полностью уничтожен
             cell_surf = pygame.Surface((16, 16), pygame.SRCALPHA)
             if cell["damage"] == 0 or cell["side"] is None:
                 cell_surf.blit(base_sprite, (0, 0))
@@ -485,7 +482,6 @@ class BrickWall(pygame.sprite.Sprite):
         # Горизонтальные выстрелы:
         if bullet.direction in ("left", "right"):
             if bullet.direction == "left":
-                # Пуля летит влево → пришла с правой стороны:
                 default_col = "right"
                 fallback_col = "left"
                 hit_side = "right"
@@ -506,20 +502,18 @@ class BrickWall(pygame.sprite.Sprite):
                 else:
                     default_key = "tr" if row == "top" else "br"
                     fallback_key = "tl" if row == "top" else "bl"
-                if self.cells[default_key]["damage"] < 16:
+                if default_key in self.cells and self.cells[default_key]["damage"] < 16:
                     cells_to_damage.append(default_key)
-                elif self.cells[fallback_key]["damage"] < 16:
+                elif fallback_key in self.cells and self.cells[fallback_key]["damage"] < 16:
                     cells_to_damage.append(fallback_key)
         
         # Вертикальные выстрелы:
         elif bullet.direction in ("top", "up", "bottom", "down"):
             if bullet.direction in ("top", "up"):
-                # Пуля летит вверх → пришла с низа, повреждаются нижние субспрайты
                 default_row = "bottom"
                 fallback_row = "top"
                 hit_side = "bottom"
             else:
-                # Пуля летит вниз → пришла с верха, повреждаются верхние субспрайты
                 default_row = "top"
                 fallback_row = "bottom"
                 hit_side = "top"
@@ -530,9 +524,6 @@ class BrickWall(pygame.sprite.Sprite):
             else:
                 cols = ["left", "right"]
             for col in cols:
-                # Здесь изменяем fallback: выбираем fallback из той же колонки, то есть:
-                # Если col == "left": default_key = "bl" (если default_row == "bottom") или "tl" (если default_row == "top");
-                # fallback_key = "tl" (если default_row == "bottom") или "bl" (если default_row == "top").
                 if col == "left":
                     if default_row == "bottom":
                         default_key = "bl"
@@ -547,9 +538,9 @@ class BrickWall(pygame.sprite.Sprite):
                     else:
                         default_key = "tr"
                         fallback_key = "br"
-                if self.cells[default_key]["damage"] < 16:
+                if default_key in self.cells and self.cells[default_key]["damage"] < 16:
                     cells_to_damage.append(default_key)
-                elif self.cells[fallback_key]["damage"] < 16:
+                elif fallback_key in self.cells and self.cells[fallback_key]["damage"] < 16:
                     cells_to_damage.append(fallback_key)
         else:
             return True
@@ -588,57 +579,234 @@ def place_random_brick_wall():
         for row in range(GRID_ROWS):
             all_cells.append((col, row))
 
-    # Player spawn
+    # Исключаем ячейки спавна игрока
     col_player = (player_spawn_point[0] - LEFT_MARGIN) // CELL_SIZE
     row_player = (player_spawn_point[1] - TOP_MARGIN) // CELL_SIZE
 
-    # Enemy spawns
+    # Исключаем ячейки спавна врагов
     enemy_spawn_cells = []
     for pos in spawn_positions:
         col_enemy = (pos[0] - LEFT_MARGIN) // CELL_SIZE
         row_enemy = (pos[1] - TOP_MARGIN) // CELL_SIZE
         enemy_spawn_cells.append((col_enemy, row_enemy))
 
-    excluded_cells = set()
-    excluded_cells.add((col_player, row_player))
+    excluded_cells = {(col_player, row_player)}
     for c in enemy_spawn_cells:
         excluded_cells.add(c)
 
     valid_cells = [c for c in all_cells if c not in excluded_cells]
 
-    if len(valid_cells) > 0:
+    if valid_cells:
         chosen_col, chosen_row = random.choice(valid_cells)
         x = LEFT_MARGIN + chosen_col * CELL_SIZE
         y = TOP_MARGIN + chosen_row * CELL_SIZE
-        brick = BrickWall(x, y)
+
+        # Выбираем случайное число элементов от 1 до 4 и случайное подмножество позиций
+        possible_keys = ["tl", "tr", "bl", "br"]
+        num_elements = random.randint(1, 4)
+        active_cells = tuple(random.sample(possible_keys, num_elements))
+        
+        brick = BrickWall(x, y, active_cells=active_cells)
         obstacles.add(brick)
         all_sprites.add(brick)
     else:
         print("No valid cell found for BrickWall!")
 
+# =========================
+# Класс леса (блок из 4 элементов)
+# =========================
 class Forest(pygame.sprite.Sprite):
-    def __init__(self, x, y):
+    def __init__(self, x, y, active_cells=("tl", "tr", "bl", "br")):
+        """
+        Блок леса, состоящий из 1, 2, 3 или 4 элементов 16x16.
+        По умолчанию создается полный блок (4 элемента) размером 32x32.
+        
+        Спрайт для одного элемента леса берётся из sprites.png по координатам (528,144).
+        Остальные свойства (скрытие танка и т.д.) остаются прежними.
+        """
         super().__init__()
-        # Вырезаем спрайт 32x32 по координатам (544, 64) на вашем sprites.png
-        self.image = get_sprite(544, 64, 32, 32)
-        self.rect = self.image.get_rect(topleft=(x, y))
+        self.active_cells = set(active_cells)
+        # Для упрощения размер блока всегда 32x32
+        self.rect = pygame.Rect(x, y, 32, 32)
+        self.image = self.build_image()
+    
+    def build_image(self):
+        forest_surf = pygame.Surface((32, 32), pygame.SRCALPHA)
+        positions = {
+            "tl": (0, 0),
+            "tr": (16, 0),
+            "bl": (0, 16),
+            "br": (16, 16)
+        }
+        base_sprite = get_sprite(528, 144, 16, 16)
+        for key, pos in positions.items():
+            if key in self.active_cells:
+                forest_surf.blit(base_sprite, pos)
+        return forest_surf
 
+# =========================
+# Класс бетонной стены (шаблон)
+# =========================
+class ConcreteWall(pygame.sprite.Sprite):
+    def __init__(self, x, y, active_cells=("tl", "tr", "bl", "br")):
+        """
+        Шаблон блока бетонной стены, состоящего из 4 элементов 16x16.
+        Позже можно задать координаты спрайта и свойства поведения.
+        """
+        super().__init__()
+        self.active_cells = set(active_cells)
+        self.rect = pygame.Rect(x, y, 32, 32)
+        self.base_x = 512
+        self.base_y = 144
+        self.image = self.build_image()
+        self.mask = pygame.mask.from_surface(self.image)
+    
+    def build_image(self):
+        wall_surf = pygame.Surface((32, 32), pygame.SRCALPHA)
+        positions = {"tl": (0, 0), "tr": (16, 0), "bl": (0, 16), "br": (16, 16)}
+        base_sprite = get_sprite(self.base_x, self.base_y, 16, 16)
+        for key, pos in positions.items():
+            if key in self.active_cells:
+                wall_surf.blit(base_sprite, pos)
+        return wall_surf
+    
+    # Добавьте методы для взаимодействия с игроком и логики повреждений при необходимости
+
+# =========================
+# Класс водного блока (шаблон)
+# =========================
+class Water(pygame.sprite.Sprite):
+    def __init__(self, x, y, active_cells=("tl", "tr", "bl", "br")):
+        """
+        Шаблон блока воды, состоящего из 4 элементов 16x16.
+        Позже можно задать координаты спрайта и свойства поведения.
+        """
+        super().__init__()
+        self.active_cells = set(active_cells)
+        self.rect = pygame.Rect(x, y, 32, 32)
+        self.base_x = 544
+        self.base_y = 160
+        self.image = self.build_image()
+        self.mask = pygame.mask.from_surface(self.image)
+    
+    def build_image(self):
+        water_surf = pygame.Surface((32, 32), pygame.SRCALPHA)
+        positions = {"tl": (0, 0), "tr": (16, 0), "bl": (0, 16), "br": (16, 16)}
+        base_sprite = get_sprite(self.base_x, self.base_y, 16, 16)
+        for key, pos in positions.items():
+            if key in self.active_cells:
+                water_surf.blit(base_sprite, pos)
+        return water_surf
+
+# =========================
+# Класс ледяного блока (шаблон)
+# =========================
+class Ice(pygame.sprite.Sprite):
+    def __init__(self, x, y, active_cells=("tl", "tr", "bl", "br")):
+        """
+        Шаблон блока льда, состоящего из 4 элементов 16x16.
+        Позже можно задать координаты спрайта и свойства поведения.
+        """
+        super().__init__()
+        self.active_cells = set(active_cells)
+        self.rect = pygame.Rect(x, y, 32, 32)
+        self.base_x = 544
+        self.base_y = 144
+        self.image = self.build_image()
+        self.mask = pygame.mask.from_surface(self.image)
+    
+    def build_image(self):
+        ice_surf = pygame.Surface((32, 32), pygame.SRCALPHA)
+        positions = {"tl": (0, 0), "tr": (16, 0), "bl": (0, 16), "br": (16, 16)}
+        base_sprite = get_sprite(self.base_x, self.base_y, 16, 16)
+        for key, pos in positions.items():
+            if key in self.active_cells:
+                ice_surf.blit(base_sprite, pos)
+        return ice_surf
+
+# Создание случайного лесного блока
 def place_random_forest():
     all_cells = []
     for col in range(GRID_COLS):
         for row in range(GRID_ROWS):
             all_cells.append((col, row))
 
-    # Тут, возможно, исключаете клетки спавна (или нет — раз лес не мешает спавну).
-    # Если лес не мешает, то можно и не исключать.
-
-    if len(all_cells) > 0:
+    if all_cells:
         chosen_col, chosen_row = random.choice(all_cells)
         x = LEFT_MARGIN + chosen_col * CELL_SIZE
         y = TOP_MARGIN + chosen_row * CELL_SIZE
-        f = Forest(x, y)
+
+        # Выбираем случайное число элементов от 1 до 4 и случайное подмножество позиций
+        possible_keys = ["tl", "tr", "bl", "br"]
+        num_elements = random.randint(1, 4)
+        active_cells = tuple(random.sample(possible_keys, num_elements))
+
+        f = Forest(x, y, active_cells=active_cells)
         forests.add(f)
-        all_sprites.add(f)  # если хотите видеть его и в all_sprites
+        all_sprites.add(f)
+
+# Создание случайного бетонного блока
+def place_random_concrete_wall():
+    all_cells = []
+    for col in range(GRID_COLS):
+        for row in range(GRID_ROWS):
+            all_cells.append((col, row))
+
+    if all_cells:
+        chosen_col, chosen_row = random.choice(all_cells)
+        x = LEFT_MARGIN + chosen_col * CELL_SIZE
+        y = TOP_MARGIN + chosen_row * CELL_SIZE
+
+        # Выбираем случайное число элементов от 1 до 4 и случайное подмножество позиций
+        possible_keys = ["tl", "tr", "bl", "br"]
+        num_elements = random.randint(1, 4)
+        active_cells = tuple(random.sample(possible_keys, num_elements))
+
+        c = ConcreteWall(x, y, active_cells=active_cells)
+        obstacles.add(c)
+        all_sprites.add(c)
+
+# Создание случайного водного блока
+def place_random_water():
+    all_cells = []
+    for col in range(GRID_COLS):
+        for row in range(GRID_ROWS):
+            all_cells.append((col, row))
+    
+    if all_cells:
+        chosen_col, chosen_row = random.choice(all_cells)
+        x = LEFT_MARGIN + chosen_col * CELL_SIZE
+        y = TOP_MARGIN + chosen_row * CELL_SIZE
+
+        # Выбираем случайное число элементов (от 1 до 4) и случайное подмножество позиций
+        possible_keys = ["tl", "tr", "bl", "br"]
+        num_elements = random.randint(1, 4)
+        active_cells = tuple(random.sample(possible_keys, num_elements))
+        
+        water_block = Water(x, y, active_cells=active_cells)
+        obstacles.add(water_block)
+        all_sprites.add(water_block)
+
+# Создание случайного ледяного блока
+def place_random_ice():
+    all_cells = []
+    for col in range(GRID_COLS):
+        for row in range(GRID_ROWS):
+            all_cells.append((col, row))
+    
+    if all_cells:
+        chosen_col, chosen_row = random.choice(all_cells)
+        x = LEFT_MARGIN + chosen_col * CELL_SIZE
+        y = TOP_MARGIN + chosen_row * CELL_SIZE
+
+        # Выбираем случайное число элементов (от 1 до 4) и случайное подмножество позиций
+        possible_keys = ["tl", "tr", "bl", "br"]
+        num_elements = random.randint(1, 4)
+        active_cells = tuple(random.sample(possible_keys, num_elements))
+        
+        ice_block = Ice(x, y, active_cells=active_cells)
+        obstacles.add(ice_block)
+        all_sprites.add(ice_block)
 
 # =========================
 # Класс отобрвжения очков
@@ -1471,6 +1639,9 @@ def level_transition(level):
 
     place_random_brick_wall()
     place_random_forest()
+    place_random_concrete_wall()
+    place_random_water()
+    place_random_ice()
 
     #
     # --- Сокращение анимации закрытия до 600 мс (было 1200) ---
