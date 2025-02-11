@@ -401,9 +401,6 @@ obstacles = pygame.sprite.Group()
 forests = pygame.sprite.Group()          # Группа леса
 
 # =========================
-# Класс кирпичной стены
-# =========================
-# =========================
 # Класс кирпичной стены (блок)
 # =========================
 class BrickWall(pygame.sprite.Sprite):
@@ -1132,7 +1129,7 @@ class Tank(pygame.sprite.Sprite):
 
         # 3) Если это игрок – донастраиваем
         if is_player:
-            self.bullet_speed = 10
+            self.bullet_speed = 5 #bullet speed
             self.can_double_shot = False
             self.armor_piercing = False
             self.set_upgrade_level(upgrade_level)
@@ -1169,19 +1166,19 @@ class Tank(pygame.sprite.Sprite):
 
         # 2) Меняем скорость пули и флаги
         if level == 1:
-            self.bullet_speed = 10
+            self.bullet_speed = 5
             self.can_double_shot = False
             self.armor_piercing = False
         elif level == 2:
-            self.bullet_speed = 14
+            self.bullet_speed = 10
             self.can_double_shot = False
             self.armor_piercing = False
         elif level == 3:
-            self.bullet_speed = 14
+            self.bullet_speed = 10
             self.can_double_shot = True
             self.armor_piercing = False
         elif level == 4:
-            self.bullet_speed = 14
+            self.bullet_speed = 10
             self.can_double_shot = True
             self.armor_piercing = True
 
@@ -1420,7 +1417,7 @@ class Enemy(Tank):
         
         if enemy_type == 1:
             self.speed = 2
-            self.bullet_speed = 8
+            self.bullet_speed = 5
             self.score_value = 100
         elif enemy_type == 2:
             self.speed = 4
@@ -1428,7 +1425,7 @@ class Enemy(Tank):
             self.score_value = 200
         elif enemy_type == 3:
             self.speed = 1
-            self.bullet_speed = 21
+            self.bullet_speed = 10
             self.score_value = 300
         elif enemy_type == 4:
             self.speed = 1
@@ -1622,7 +1619,7 @@ class Enemy(Tank):
 # Класс Bullet – пуля
 # =========================
 class Bullet(pygame.sprite.Sprite):
-    def __init__(self, x, y, direction, owner, speed=10):
+    def __init__(self, x, y, direction, owner, speed=5):
         super().__init__()
         self.image = bullet_sprites[direction]
         self.rect = self.image.get_rect(center=(x, y))
