@@ -806,7 +806,8 @@ class ConcreteWall(pygame.sprite.Sprite):
                 updated = True
 
         if updated:
-            wall_sound.play()
+            if bullet.owner == "player":
+                wall_sound.play()
             self.update_image()
         # Если все активные элементы уничтожены, удаляем объект
         if all(self.cells[k]["damage"] >= 16 for k in self.cells):
@@ -827,17 +828,34 @@ class Water(pygame.sprite.Sprite):
         self.rect = pygame.Rect(x, y, 32, 32)
         self.base_x = 544
         self.base_y = 160
-        self.image = self.build_image()
+        self.frames = [
+            self.build_image(0),
+            self.build_image(16),
+            self.build_image(32),
+            self.build_image(16)
+        ]
+        self.current_frame = 0
+        self.last_update = pygame.time.get_ticks()
+        self.frame_duration = 500  # 500 мс на кадр
+        self.image = self.frames[self.current_frame]
         self.mask = pygame.mask.from_surface(self.image)
     
-    def build_image(self):
+    def build_image(self, offset_x):
         water_surf = pygame.Surface((32, 32), pygame.SRCALPHA)
         positions = {"tl": (0, 0), "tr": (16, 0), "bl": (0, 16), "br": (16, 16)}
-        base_sprite = get_sprite(self.base_x, self.base_y, 16, 16)
+        base_sprite = get_sprite(self.base_x - offset_x, self.base_y, 16, 16)
         for key, pos in positions.items():
             if key in self.active_cells:
                 water_surf.blit(base_sprite, pos)
         return water_surf
+
+    def update(self):
+        now = pygame.time.get_ticks()
+        if now - self.last_update > self.frame_duration:
+            self.last_update = now
+            self.current_frame = (self.current_frame + 1) % len(self.frames)
+            self.image = self.frames[self.current_frame]
+            self.mask = pygame.mask.from_surface(self.image)
 
 # =========================
 # Класс ледяного блока (шаблон)
@@ -1177,8 +1195,10 @@ class Tank(pygame.sprite.Sprite):
         """Базовый метод для ИИ управления (пустая реализация)"""
         pass
 
-    def update(self, input_keys):
+    def update(self, input_keys=None):
         if self.is_alive and self.is_player:
+            if input_keys is None:
+                return  # Если input_keys не передан, выходим из метода
             old_rect = self.rect.copy()
             old_direction = self.direction  # Сохраняем предыдущее направление для сравнения
 
@@ -1260,6 +1280,8 @@ class Tank(pygame.sprite.Sprite):
 
             self.is_moving = (old_rect.x != self.rect.x or old_rect.y != self.rect.y)
             self._animate()
+        else:
+            self._animate()
 
     def _animate(self):
         global current_player_sound
@@ -1292,6 +1314,15 @@ class Tank(pygame.sprite.Sprite):
         """Стрельба с учётом двойного выстрела (can_double_shot)."""
         now = pygame.time.get_ticks()
         
+        # Проверяем, есть ли активные пули
+        if self.is_player:
+            active_bullets = player_bullets
+        else:
+            active_bullets = enemy_bullets
+
+        if any(bullet.owner == ("player" if self.is_player else "enemy") for bullet in active_bullets):
+            return  # Если есть активные пули, не стреляем
+
         if not self.can_double_shot:
             # Обычный выстрел (кулдаун 500 мс)
             if now >= self.shoot_cooldown and self.is_alive:
@@ -1335,19 +1366,23 @@ class Tank(pygame.sprite.Sprite):
             bullet_x,
             bullet_y,
             self.direction,
-            owner="player",
+            owner="player" if self.is_player else "enemy",
             speed=self.bullet_speed
         )
         # Если уровень 4, пули бронебойные
-        if self.armor_piercing:
+        if self.is_player and self.armor_piercing:
             bullet.armor_piercing = True
         
-        player_bullets.add(bullet)
+        if self.is_player:
+            player_bullets.add(bullet)
+        else:
+            enemy_bullets.add(bullet)
         all_sprites.add(bullet)
 
         # Звуки, вибрация
         shoot_sound.play()
-        do_rumble(0.2, 0.2, 150)
+        if self.is_player:
+            do_rumble(0.2, 0.2, 150)
 
     def destroy(self):
         if self.is_player:
@@ -1544,8 +1579,8 @@ class Enemy(Tank):
                 self.direction = random.choice(["up", "down", "left", "right"])
                 break
 
-        # Если танк специальный (бонусный), переключаем спрайт с использованием бонусных спрайтов
-        if self.is_special and self.is_alive:
+        # Мерцание для специальных танков (включая получивших урон не-тяжелых)
+        if self.is_special:
             now = pygame.time.get_ticks()
             if now - self.last_blink > 200:
                 self.blink_state = not self.blink_state
@@ -1559,7 +1594,13 @@ class Enemy(Tank):
             self.shoot()
 
     def shoot(self):
-        if self.shoot_cooldown < pygame.time.get_ticks() and self.is_alive:
+        now = pygame.time.get_ticks()
+        
+        # Проверяем, есть ли активные пули
+        if any(bullet.owner == "enemy" for bullet in enemy_bullets):
+            return  # Если есть активные пули, не стреляем
+
+        if now >= self.shoot_cooldown and self.is_alive:
             if self.direction == "up":
                 bullet_x = self.rect.centerx
                 bullet_y = self.rect.top - 4
@@ -1626,7 +1667,8 @@ class Bullet(pygame.sprite.Sprite):
                             self.kill()
                             return
                     # В противном случае — воспроизводим стандартный звук столкновения и эффект взрыва
-                    wall_sound.play()
+                    if self.owner == "player":
+                        wall_sound.play()
                     explosion = HitExplosion(old_pos)
                     explosions.add(explosion)
                     all_sprites.add(explosion)
@@ -2289,6 +2331,7 @@ while True:
                 # Если игрок не двигается, в _animate() уже запускается stand звук
                 pass
 
+        #all_sprites.update()
         game_surface.fill((99, 99, 99))
         pygame.draw.rect(game_surface, (0, 0, 0), FIELD_RECT)
         if show_grid:
@@ -2300,6 +2343,8 @@ while True:
         for obstacle in obstacles:
             if isinstance(obstacle, BrickWall):
                 obstacle.draw(game_surface)
+            elif isinstance(obstacle, Water):
+                obstacle.update()
         if player is not None and hasattr(player, "shield_active") and player.shield_active:
             elapsed_shield = pygame.time.get_ticks() - player.shield_start
             shield_frame = (elapsed_shield // 20) % 2
