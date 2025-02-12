@@ -1630,29 +1630,47 @@ class Bullet(pygame.sprite.Sprite):
 
     def update(self):
         old_pos = self.rect.center
+        step = 1  # Двигаем пулю по 1 пикселю за шаг
+        dx, dy = 0, 0
         if self.direction == "up":
-            self.rect.y -= self.speed
+            dy = -step
         elif self.direction == "down":
-            self.rect.y += self.speed
+            dy = step
         elif self.direction == "left":
-            self.rect.x -= self.speed
+            dx = -step
         elif self.direction == "right":
-            self.rect.x += self.speed
+            dx = step
 
-        # Проверяем столкновение с препятствиями с использованием collide_mask
+        # Проверяем коллизии на каждом микрошаге
+        for _ in range(self.speed):
+            self.rect.x += dx
+            self.rect.y += dy
+
+            # Проверка столкновений
+            if self.check_collision():
+                return
+
+        # Проверяем столкновение с препятствиями с использованием collide_map
+        # Если пуля уходит за пределы игрового поля,
+        # то для пуль игрока проигрываем звук, для вражеских — нет
+        if not FIELD_RECT.collidepoint(self.rect.center):
+            if self.owner == "player":
+                wall_sound.play()
+            explosion = HitExplosion(old_pos)
+            explosions.add(explosion)
+            all_sprites.add(explosion)
+            self.kill()
+    def check_collision(self):
+        old_pos = self.rect.center
         hits = pygame.sprite.spritecollide(self, obstacles, False, pygame.sprite.collide_mask)
-        if hits:
-            for obstacle in hits:
-                # Кирпичная стена – обрабатываем как прежде
-                if isinstance(obstacle, BrickWall):
-                    if obstacle.collides_with_point(self.rect.center):
-                        if obstacle.take_damage(self):
-                            explosion = HitExplosion(old_pos)
-                            explosions.add(explosion)
-                            all_sprites.add(explosion)
-                            self.kill()
-                            return
-
+        for obstacle in hits:
+            if isinstance(obstacle, BrickWall):
+                if obstacle.take_damage(self):
+                    explosion = HitExplosion(old_pos)
+                    explosions.add(explosion)
+                    all_sprites.add(explosion)
+                    self.kill()
+                    return True
                 # Бетонная стена
                 elif isinstance(obstacle, ConcreteWall):
                     # Если пуля от игрока и его уровень прокачки 4 – разрушаем элемент (аналогично кирпичной стене)
@@ -1683,16 +1701,7 @@ class Bullet(pygame.sprite.Sprite):
                 else:
                     self.kill()
                     return
-
-        # Если пуля уходит за пределы игрового поля,
-        # то для пуль игрока проигрываем звук, для вражеских — нет
-        if not FIELD_RECT.collidepoint(self.rect.center):
-            if self.owner == "player":
-                wall_sound.play()
-            explosion = HitExplosion(old_pos)
-            explosions.add(explosion)
-            all_sprites.add(explosion)
-            self.kill()
+        return False
 
 # =========================
 # Класс для спрайта завершения игры
