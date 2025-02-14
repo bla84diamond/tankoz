@@ -804,7 +804,7 @@ class ConcreteWall(pygame.sprite.Sprite):
 
         if updated:
             if bullet.owner == "player":
-                wall_sound.play()
+                destroy_sound.play()
             self.update_image()
         # Если все активные элементы уничтожены, удаляем объект
         if all(self.cells[k]["damage"] >= 16 for k in self.cells):
@@ -1671,36 +1671,36 @@ class Bullet(pygame.sprite.Sprite):
                     all_sprites.add(explosion)
                     self.kill()
                     return True
-                # Бетонная стена
-                elif isinstance(obstacle, ConcreteWall):
-                    # Если пуля от игрока и его уровень прокачки 4 – разрушаем элемент (аналогично кирпичной стене)
-                    if self.owner == "player" and player_upgrade_level == 4:
-                        if obstacle.take_damage(self):  # Реализуйте аналогичную логику take_damage для ConcreteWall
-                            explosion = HitExplosion(old_pos)
-                            explosions.add(explosion)
-                            all_sprites.add(explosion)
-                            self.kill()
-                            return
-                    # В противном случае — воспроизводим стандартный звук столкновения и эффект взрыва
-                    if self.owner == "player":
-                        wall_sound.play()
-                    explosion = HitExplosion(old_pos)
-                    explosions.add(explosion)
-                    all_sprites.add(explosion)
-                    self.kill()
-                    return
+            # Бетонная стена
+            elif isinstance(obstacle, ConcreteWall):
+                # Если пуля от игрока и его уровень прокачки 4 – разрушаем элемент (аналогично кирпичной стене)
+                if self.owner == "player" and player_upgrade_level == 4:
+                    if obstacle.take_damage(self):  # Реализуйте аналогичную логику take_damage для ConcreteWall
+                        explosion = HitExplosion(old_pos)
+                        explosions.add(explosion)
+                        all_sprites.add(explosion)
+                        self.kill()
+                        return
+                # В противном случае — воспроизводим стандартный звук столкновения и эффект взрыва
+                if self.owner == "player":
+                    wall_sound.play()
+                explosion = HitExplosion(old_pos)
+                explosions.add(explosion)
+                all_sprites.add(explosion)
+                self.kill()
+                return
 
-                # Вода – пулям разрешается лететь над препятствием, пропускаем его
-                elif isinstance(obstacle, Water):
-                    continue
+            # Вода – пулям разрешается лететь над препятствием, пропускаем его
+            elif isinstance(obstacle, Water):
+                continue
 
-                # Лёд – пули пролетают над ним, игнорируем
-                elif isinstance(obstacle, Ice):
-                    continue
+            # Лёд – пули пролетают над ним, игнорируем
+            elif isinstance(obstacle, Ice):
+                continue
 
-                else:
-                    self.kill()
-                    return
+            else:
+                self.kill()
+                return
         return False
 
 # =========================
@@ -1880,6 +1880,7 @@ def level_transition(level):
     explosions.empty()
     player_bullets.empty()
     enemy_bullets.empty()
+    bonus_group.empty()
     obstacles.empty()
     forests.empty()
 
@@ -2448,6 +2449,7 @@ while True:
             explosions.empty()
             player_bullets.empty()
             enemy_bullets.empty()
+            bonus_group.empty()
             pygame.mixer.stop()
             
             # Полный сброс глобальных переменных
