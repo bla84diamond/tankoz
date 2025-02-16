@@ -12,7 +12,7 @@ if pygame.joystick.get_count() > 0:
 # =========================
 # Параметры отладки
 # =========================
-show_grid = True        # Видимость сетки
+show_grid = False        # Видимость сетки
 
 # =========================
 # Глобальные переменные
@@ -91,7 +91,7 @@ game_surface = pygame.Surface((GAME_WIDTH, GAME_HEIGHT))
 header_font = pygame.font.SysFont("consolas", 16, bold=True)
 
 # Загрузка спрайтов
-spritesheet = pygame.image.load("sprites.png").convert_alpha()
+spritesheet = pygame.image.load("res\sprites.png").convert_alpha()
 
 # Функция вибрации на джойстике
 def do_rumble(low, high, duration_ms):
@@ -1946,6 +1946,48 @@ def spawn_enemy_callback(pos):
     update_grid_after_spawn()
     spawn_occupancy[pos] = False
 
+# Функция загрузка уровня из файла
+def load_level(level_num):
+    obstacles.empty()
+    forests.empty()
+    hq_temp_walls.empty()
+    
+    try:
+        with open(f"levels/{level_num:02d}", 'r') as f:
+            lines = f.read().splitlines()
+    except FileNotFoundError:
+        print(f"Level {level_num} not found!")
+        return
+
+    for line in lines:
+        parts = line.split(',')
+        if parts[0] == 'hq':
+            # Создаем штаб
+            grid_x, grid_y = int(parts[1]), int(parts[2])
+            x = LEFT_MARGIN + grid_x * CELL_SIZE
+            y = TOP_MARGIN + grid_y * CELL_SIZE
+            hq = Headquarters(x, y)
+            obstacles.add(hq)
+            all_sprites.add(hq)
+        else:
+            grid_x, grid_y = int(parts[0]), int(parts[1])
+            part = parts[2]
+            obj_type = parts[3]
+            
+            x = LEFT_MARGIN + grid_x * CELL_SIZE
+            y = TOP_MARGIN + grid_y * CELL_SIZE
+
+            if obj_type == 'brick':
+                BrickWall(x, y, [part]).add(obstacles, all_sprites)
+            elif obj_type == 'concrete':
+                ConcreteWall(x, y, [part]).add(obstacles, all_sprites)
+            elif obj_type == 'water':
+                Water(x, y, [part]).add(obstacles, all_sprites)
+            elif obj_type == 'forest':
+                Forest(x, y, [part]).add(forests, all_sprites)
+            elif obj_type == 'ice':
+                Ice(x, y, [part]).add(obstacles, all_sprites)
+
 # =========================
 # Функция перехода на уровень (экран STAGE)
 # =========================
@@ -1970,11 +2012,14 @@ def level_transition(level):
     obstacles.empty()
     forests.empty()
 
-    place_random_brick_wall()
-    place_random_forest()
-    place_random_concrete_wall()
-    place_random_water()
-    place_random_ice()
+    # Загрузка уровня
+    load_level(level)
+
+    #place_random_brick_wall()
+    #place_random_forest()
+    #place_random_concrete_wall()
+    #place_random_water()
+    #place_random_ice()
 
     #
     # --- Сокращение анимации закрытия до 600 мс (было 1200) ---
