@@ -1,7 +1,6 @@
 import pygame
 import sys
 import random
-from datetime import datetime
 
 pygame.init()
 pygame.joystick.init()
@@ -89,7 +88,6 @@ pygame.display.set_caption("Battle City PC")
 game_surface = pygame.Surface((GAME_WIDTH, GAME_HEIGHT))
 
 # Загрузка шрифтов
-debug_font = pygame.font.SysFont("consolas", 14)
 header_font = pygame.font.SysFont("consolas", 16, bold=True)
 
 # Загрузка спрайтов
@@ -1459,7 +1457,6 @@ class Enemy(Tank):
         self.change_direction_time = pygame.time.get_ticks() + random.randint(1000, 5000)
         self.speed = 2
         self.direction = initial_direction
-        self.spawn_time = datetime.now().strftime("%H:%M:%S")
         self.destroy_time = None
         self.enemy_type = enemy_type
         self.armor_level = armor_level
