@@ -47,6 +47,16 @@ game_over_phase = 0  # 0 - движение спрайта, 1 - ожидание
 game_over_sprite = None
 
 # =========================
+# Глобальные переменные для HQ Boost
+# =========================
+hq_boost_active = False
+hq_boost_end_time = 0
+hq_original_walls = []
+hq_temp_walls = pygame.sprite.Group()
+blink_state = False
+last_blink = 0
+
+# =========================
 # Константы размеров
 # =========================
 CELL_SIZE = 32
@@ -1002,6 +1012,47 @@ class Bonus(pygame.sprite.Sprite):
         if pygame.time.get_ticks() - self.spawn_time > 10000:
             self.kill()
 
+# Функция проверки попадания в штаб
+def check_hq_hit(bullet):
+    hq_cell_x = 6  # Фиксированная позиция штаба
+    hq_cell_y = 12
+    
+    # Переводим координаты пули в клеточные координаты
+    grid_x = (bullet.rect.centerx - LEFT_MARGIN) // CELL_SIZE
+    grid_y = (bullet.rect.centery - TOP_MARGIN) // CELL_SIZE
+    
+    return grid_x == hq_cell_x and grid_y == hq_cell_y
+
+# =========================
+# Класс штаба игрока
+# =========================
+class Headquarters(pygame.sprite.Sprite):
+    def __init__(self, x, y):
+        super().__init__()
+        self.grid_x = 6
+        self.grid_y = 12
+        self.normal_sprite = get_sprite(608, 64, 32, 32)
+        self.destroyed_sprite = get_sprite(640, 64, 32, 32)
+        self.image = self.normal_sprite
+        self.rect = self.image.get_rect(
+            topleft=(LEFT_MARGIN + self.grid_x * CELL_SIZE,
+                     TOP_MARGIN + self.grid_y * CELL_SIZE))
+        self.destroyed = False
+        self.mask = pygame.mask.from_surface(self.image)  # Инициализация маски
+
+    def destroy(self):
+        if self.destroyed:
+            return
+        self.destroyed = True
+        self.image = self.destroyed_sprite
+        self.mask = pygame.mask.from_surface(self.image)  # Обновление маски
+        death_sound.play()
+        global game_over
+        game_over = True
+        start_game_over_sequence()
+        pygame.mixer.stop()
+        death_sound.play()
+
 # =========================
 # Класс для взрыва при попадании
 # =========================
@@ -1193,6 +1244,8 @@ class Tank(pygame.sprite.Sprite):
         pass
 
     def update(self, input_keys=None):
+        if game_over:  # Блокируем обновление позиции
+            return
         if self.is_alive and self.is_player:
             if input_keys is None:
                 return  # Если input_keys не передан, выходим из метода
@@ -1308,7 +1361,9 @@ class Tank(pygame.sprite.Sprite):
         self.image = self.sprites[self.direction][self.current_sprite]
 
     def shoot(self):
-        """Стрельба с учётом двойного выстрела (can_double_shot)."""
+        if game_over:  # Блокируем стрельбу при game_over
+            return
+
         now = pygame.time.get_ticks()
         
         # Проверяем, есть ли активные пули
@@ -1630,6 +1685,9 @@ class Bullet(pygame.sprite.Sprite):
 
     def update(self):
         old_pos = self.rect.center
+        if self.owner == "enemy":
+            if self.check_hq_collision():
+                return
         step = 1  # Двигаем пулю по 1 пикселю за шаг
         dx, dy = 0, 0
         if self.direction == "up":
@@ -1650,6 +1708,14 @@ class Bullet(pygame.sprite.Sprite):
             if self.check_collision():
                 return
 
+        # Новая проверка попадания в штаб
+        if check_hq_hit(self):
+            for hq in obstacles:
+                if isinstance(hq, Headquarters) and not hq.destroyed:
+                    hq.destroy()
+                    self.kill()
+                    return
+
         # Проверяем столкновение с препятствиями с использованием collide_map
         # Если пуля уходит за пределы игрового поля,
         # то для пуль игрока проигрываем звук, для вражеских — нет
@@ -1660,8 +1726,25 @@ class Bullet(pygame.sprite.Sprite):
             explosions.add(explosion)
             all_sprites.add(explosion)
             self.kill()
+
+    def check_hq_collision(self):
+        hq = next((spr for spr in obstacles if isinstance(spr, Headquarters)), None)
+        if hq and self.rect.colliderect(hq.rect):
+            hq.destroy()
+            self.kill()
+            return True
+        return False
+
     def check_collision(self):
         old_pos = self.rect.center
+        # Первым делом проверяем столкновение с HQ
+        hq_collision = pygame.sprite.spritecollideany(self, obstacles, 
+            collided=lambda spr, _: isinstance(spr, Headquarters))
+        if hq_collision:
+            hq_collision.destroy()
+            self.kill()
+            return True
+
         hits = pygame.sprite.spritecollide(self, obstacles, False, pygame.sprite.collide_mask)
         for obstacle in hits:
             if isinstance(obstacle, BrickWall):
@@ -1709,8 +1792,8 @@ class Bullet(pygame.sprite.Sprite):
 class GameOverSprite(pygame.sprite.Sprite):
     def __init__(self):
         super().__init__()
-        self.image = get_sprite(576, 367, 64, 32)
-        self.rect = self.image.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT + 32))
+        self.image = get_sprite(576, 367, 64, 32).convert_alpha()
+        self.rect = self.image.get_rect(center=(WINDOW_WIDTH//2, WINDOW_HEIGHT+32))
         self.speed = 2
         self.target_y = WINDOW_HEIGHT // 2
         self.arrived = False
@@ -1727,16 +1810,21 @@ class GameOverSprite(pygame.sprite.Sprite):
 # Функция запуска завершения игры
 # =========================
 def start_game_over_sequence():
-    global game_over, game_over_sprite, game_over_phase, player_lives, player
+    global game_over, game_over_sprite, game_over_phase, player_lives, player, paused, player_upgrade_level, current_player_sound
     game_over = True
+    player_upgrade_level = 1  # Сбрасываем уровень прокачки
     game_over_phase = 0
     game_over_sprite = GameOverSprite()
-    all_sprites.add(game_over_sprite)
     
-    # Полный сброс состояния игрока
-    if player is not None:
-        player.kill()
-    player = None
+    # Блокируем управление
+    if player:
+        player.speed = 0
+        player.bullet_speed = 0
+        player.is_alive = False
+        
+    # Останавливаем все звуки
+    current_player_sound = None  # Сбросить состояние звука
+
     player_respawn_time = float('inf')
 
 def update_grid_after_spawn():
@@ -1865,6 +1953,7 @@ def spawn_enemy_callback(pos):
 # Функция перехода на уровень (экран STAGE)
 # =========================
 def level_transition(level):
+    global hq_wall_positions
     start_sound.play()
     if level > 1:
         final_surface = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
@@ -1975,7 +2064,68 @@ def level_transition(level):
         pygame.time.delay(16)
 
     screen.blit(final_surface, (0, 0))
+
+    # Сохраняем позиции стен штаба
+    hq_wall_positions = [
+        (LEFT_MARGIN + 5*CELL_SIZE, TOP_MARGIN + 12*CELL_SIZE, ["br", "tr"]),
+        (LEFT_MARGIN + 5*CELL_SIZE, TOP_MARGIN + 11*CELL_SIZE, ["br"]),
+        (LEFT_MARGIN + 6*CELL_SIZE, TOP_MARGIN + 11*CELL_SIZE, ["bl", "br"]),
+        (LEFT_MARGIN + 7*CELL_SIZE, TOP_MARGIN + 11*CELL_SIZE, ["bl"]),
+        (LEFT_MARGIN + 7*CELL_SIZE, TOP_MARGIN + 12*CELL_SIZE, ["bl", "tl"])
+    ]
+
+    # Создаем кирпичные стены
+    for x, y, cells in hq_wall_positions:
+        wall = BrickWall(x, y, active_cells=cells)
+        obstacles.add(wall)
+        all_sprites.add(wall)
+
+    # Создание штаба
+    hq_x = LEFT_MARGIN + 6 * CELL_SIZE
+    hq_y = TOP_MARGIN + 12 * CELL_SIZE
+    hq = Headquarters(hq_x, hq_y)
+    obstacles.add(hq)  # Добавляем HQ в группу препятствий
+    all_sprites.add(hq)
+
     pygame.display.flip()
+
+# =========================
+# Обработка бонуса HQ Boost
+# =========================
+def activate_hq_boost():
+    global hq_boost_active, hq_boost_end_time, hq_original_walls
+    hq_boost_active = True
+    hq_boost_end_time = pygame.time.get_ticks() + 15000  # 15 секунд
+    
+    # Сохраняем оригинальные стены
+    hq_original_walls = [wall for wall in obstacles if isinstance(wall, BrickWall) and wall.rect.topleft in [(x,y) for x,y,_ in hq_wall_positions]]
+    
+    # Удаляем оригинальные кирпичные стены
+    for wall in hq_original_walls:
+        wall.kill()
+    
+    # Создаем временные бетонные стены
+    for x, y, cells in hq_wall_positions:
+        concrete_wall = ConcreteWall(x, y, active_cells=cells)
+        hq_temp_walls.add(concrete_wall)
+    
+    obstacles.add(hq_temp_walls)
+    all_sprites.add(hq_temp_walls)
+
+def deactivate_hq_boost():
+    global hq_boost_active, blink_state
+    hq_boost_active = False
+    blink_state = False
+    
+    # Удаляем временные стены
+    for wall in hq_temp_walls:
+        wall.kill()
+    
+    # Восстанавливаем оригинальные стены
+    for x, y, cells in hq_wall_positions:
+        new_wall = BrickWall(x, y, active_cells=cells)
+        obstacles.add(new_wall)
+        all_sprites.add(new_wall)
 
 # =========================
 # Главное меню выбора режима (исправлено управление джойстиком)
@@ -2260,8 +2410,7 @@ while True:
                     ### ИЗМЕНЕНИЕ: инициализируем "следующую пульсацию" через 1 секунду
                     time_stop_rumble_next = pygame.time.get_ticks() + 1000
                 elif bonus.type == "hq_boost":
-                    # Заглушка для усиления штаба
-                    print("Усиление штаба активировано (заглушка)")
+                    activate_hq_boost()
                     bonus_channel.play(bonus_take_sound)
                 elif bonus.type == "tank_boost":
                     ### ИЗМЕНЕНИЕ:
@@ -2337,8 +2486,38 @@ while True:
             else:
                 # Если игрок не двигается, в _animate() уже запускается stand звук
                 pass
+        # Объединяем все пули в одну группу
+        all_bullets = pygame.sprite.Group()
+        all_bullets.add(player_bullets, enemy_bullets)
+        # Проверяем попадания в штаб
+        for hq in all_sprites:
+            if isinstance(hq, Headquarters) and not hq.destroyed:
+                if pygame.sprite.spritecollideany(hq, all_bullets):
+                    hq.destroy()
+                    break
 
-        #all_sprites.update()
+        if hq_boost_active:
+            time_left = hq_boost_end_time - pygame.time.get_ticks()
+            
+            # Мигание в последние 5 секунд
+            if time_left <= 5000:
+                if pygame.time.get_ticks() - last_blink > 500:
+                    blink_state = not blink_state
+                    last_blink = pygame.time.get_ticks()
+                    
+                    # Меняем спрайты стен
+                    for wall in hq_temp_walls:
+                        if blink_state:
+                            # Показываем кирпичные стены
+                            wall.image = BrickWall(wall.rect.x, wall.rect.y, wall.active_cells).image
+                        else:
+                            # Показываем бетонные стены
+                            wall.image = ConcreteWall(wall.rect.x, wall.rect.y, wall.active_cells).image
+            
+            # Завершение бонуса
+            if time_left <= 0:
+                deactivate_hq_boost()
+
         game_surface.fill((99, 99, 99))
         pygame.draw.rect(game_surface, (0, 0, 0), FIELD_RECT)
         if show_grid:
@@ -2362,6 +2541,10 @@ while True:
         forests.draw(game_surface)
         # А ТЕПЕРЬ БОНУСЫ
         bonus_group.draw(game_surface)
+
+        # Отрисовка Game Over поверх всего
+        if game_over and game_over_sprite is not None:
+            game_surface.blit(game_over_sprite.image, game_over_sprite.rect)
         
         screen.fill((0, 0, 0))
         screen.blit(game_surface, (0, 0))
@@ -2441,6 +2624,11 @@ while True:
             if pygame.time.get_ticks() - game_over_start_time >= 3000:
                 game_over_phase = 2
         elif game_over_phase == 2:
+            # Уничтожаем игрока только на этой стадии
+            if player is not None:
+                player.kill()
+                player = None
+                
             # Очистка ресурсов и возврат в меню
             all_sprites.empty()
             tank_group.empty()
