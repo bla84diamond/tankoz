@@ -88,8 +88,8 @@
 
 1. Клонировать репозиторий:
 ```bash
-git clone https://github.com/yourusername/battle-city-remake.git
-cd battle-city-remake
+git clone https://github.com/bla84diamond/tankoz.git
+cd tankoz
 ```
 
 2. Установить зависимости:
