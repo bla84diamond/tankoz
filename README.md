@@ -1,4 +1,4 @@
-# 🎮 Battle City PC Remake 🚀
+# 🎮 Battle City PC Remake 🚜
 
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue?logo=python)](https://python.org)
 [![Pygame](https://img.shields.io/badge/Pygame-2.0-red?logo=game)](https://pygame.org)
