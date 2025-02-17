@@ -37,6 +37,7 @@ armor_rumble_next = 0        # то же для бонуса "armor"
 # =========================
 # Глобальные переменные уровня
 # =========================
+selecting = False
 current_level = 1
 enemies_to_spawn = 20  # сколько ещё врагов предстоит появиться (из 20)
 enemies_remaining_level = 20  # сколько врагов осталось убить в этом уровне
@@ -1044,7 +1045,9 @@ class Headquarters(pygame.sprite.Sprite):
         self.destroyed = True
         self.image = self.destroyed_sprite
         self.mask = pygame.mask.from_surface(self.image)  # Обновление маски
-        death_sound.play()
+        explosion = Explosion(self.rect.center)
+        explosions.add(explosion)
+        all_sprites.add(explosion)
         global game_over
         game_over = True
         start_game_over_sequence()
@@ -1091,7 +1094,7 @@ class Explosion(pygame.sprite.Sprite):
         frame4 = get_sprite(672, 256, 64, 64)
         self.frames = [frame0, frame1, frame2, frame3, frame4]
         self.total_frames = len(self.frames)
-        self.total_duration = 500  # длительность анимации взрыва
+        self.total_duration = 400  # длительность анимации взрыва
         self.frame_duration = self.total_duration / self.total_frames
         self.start_time = pygame.time.get_ticks()
         self.image = self.frames[0]
@@ -1992,12 +1995,82 @@ def load_level(level_num):
 # Функция перехода на уровень (экран STAGE)
 # =========================
 def level_transition(level):
-    global hq_wall_positions
-    start_sound.play()
+    global hq_wall_positions, selecting
+
     if level > 1:
         final_surface = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
         final_surface.fill((99, 99, 99))  # затемнённые отступы
         pygame.draw.rect(final_surface, (0, 0, 0), FIELD_RECT)
+
+    clock = pygame.time.Clock()
+    selected_level = level
+    last_change_time = 0
+    acceleration_delay = 500  # Задержка перед ускоренным изменением
+    acceleration_interval = 90  # Интервал при ускорении
+    while selecting:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
+        
+        keys = pygame.key.get_pressed()
+        joystick_buttons = {}
+        if joystick:
+            joystick_buttons['A'] = joystick.get_button(0)  # Кнопка A
+            joystick_buttons['B'] = joystick.get_button(1)  # Кнопка B
+        
+        # Изменение уровня
+        change_amount = 0
+        now = pygame.time.get_ticks()
+        if last_change_time == 0:
+            if keys[pygame.K_LEFT] or joystick_buttons.get('A'):
+                change_amount -= 1
+                last_change_time = now
+            if keys[pygame.K_RIGHT] or joystick_buttons.get('B'):
+                change_amount += 1
+                last_change_time = now
+        else:
+                # Ускоренное изменение после задержки
+                if now - last_change_time > acceleration_delay:
+                    if keys[pygame.K_LEFT] or joystick_buttons.get('A'):
+                        change_amount -= 1
+                        last_change_time = now - acceleration_delay + acceleration_interval
+                    if keys[pygame.K_RIGHT] or joystick_buttons.get('B'):
+                        change_amount += 1
+                        last_change_time = now - acceleration_delay + acceleration_interval
+
+        selected_level = max(1, min(35, selected_level + change_amount))
+        
+        # Подтверждение выбора
+        if keys[pygame.K_SPACE] or keys[pygame.K_RETURN] or joystick.get_button(7):  # Start кнопка для подтверждения
+            selecting = False
+        
+        # Отрисовка
+        screen.fill((0, 0, 0))
+        
+        # Рассчитываем отступы
+        level_digits = render_level_number(selected_level)
+        total_width = 80 + (16 * len(level_digits))
+        offset = 32 if selected_level < 10 else 16
+        start_x = FIELD_RECT.left + (FIELD_RECT.width - total_width - offset) // 2
+        start_y = FIELD_RECT.top + (FIELD_RECT.height - 14) // 2
+        
+        stage_surface = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
+        stage_surface.fill((99, 99, 99))
+        stage_surface.blit(stage_text_sprite, (start_x, start_y))
+        
+        digit_x = start_x + 80 + offset
+        digit_y = start_y - 1
+        for digit_sprite in level_digits:
+            stage_surface.blit(digit_sprite, (digit_x, digit_y))
+            digit_x += 16
+        
+        screen.blit(stage_surface, (0, 0))
+        pygame.display.flip()
+        clock.tick(60)
+    
+    #Продолжаем обычную загрузку уровня
+    selected_level = max(1, min(35, selected_level))  # Ограничение уровней от 1 до 35
 
     # 0. Очистка всех спрайтов
     global all_sprites, tank_group, enemies, spawn_group, explosions, player_bullets, enemy_bullets
@@ -2012,14 +2085,8 @@ def level_transition(level):
     obstacles.empty()
     forests.empty()
 
-    # Загрузка уровня
-    load_level(level)
-
-    #place_random_brick_wall()
-    #place_random_forest()
-    #place_random_concrete_wall()
-    #place_random_water()
-    #place_random_ice()
+    # Загрузка выбранного уровня
+    load_level(selected_level)
 
     #
     # --- Сокращение анимации закрытия до 600 мс (было 1200) ---
@@ -2047,35 +2114,30 @@ def level_transition(level):
         pygame.time.delay(16)
 
     # 1. Рисуем надпись STAGE + номер уровня на центре игрового поля
-    level_digits = render_level_number(level)
-    total_width = 80 + 16 + (16 * len(level_digits))  # 80 — ширина спрайта "STAGE", небольшой зазор + цифры
-    start_x = FIELD_RECT.left + (FIELD_RECT.width - total_width) // 2
+    level_digits = render_level_number(selected_level)
+    total_width = 80 + (16 * len(level_digits))
+    offset = 32 if selected_level < 10 else 16
+    start_x = FIELD_RECT.left + (FIELD_RECT.width - total_width - offset) // 2
     start_y = FIELD_RECT.top + (FIELD_RECT.height - 14) // 2
     
     stage_surface = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
     stage_surface.fill((99, 99, 99))
     stage_surface.blit(stage_text_sprite, (start_x, start_y))
-
-    #
-    # --- Для выравнивания по центру спрайта "STAGE":
-    #     Спрайт "STAGE" высотой 14 px, цифры – 16 px, поэтому сместим их на -1 по вертикали
-    #
-    digit_x = start_x + 80  # справа от "STAGE"
-    digit_y = start_y - 1   # чуть выше для центрирования
-    for digit_sprite in level_digits:
-        digit_x += 16
-        stage_surface.blit(digit_sprite, (digit_x, digit_y))
     
+    digit_x = start_x + 80 + offset
+    digit_y = start_y - 1
+    for digit_sprite in level_digits:
+        stage_surface.blit(digit_sprite, (digit_x, digit_y))
+        digit_x += 16
+    
+    start_sound.play()
     screen.blit(stage_surface, (0, 0))
     pygame.display.flip()
 
     # Ждём завершения звука
     while pygame.mixer.get_busy():
-        pygame.time.wait(50)
+        pygame.time.wait(10)
 
-    #
-    # --- Ускоряем раскрытие экрана в 2 раза (1000 → 500) ---
-    #
     anim_duration = 500
     start_anim = pygame.time.get_ticks()
 
@@ -2173,6 +2235,8 @@ def deactivate_hq_boost():
 # Главное меню выбора режима (исправлено управление джойстиком)
 # =========================
 def main_menu():
+    global selecting
+    selecting = True
     title_font = pygame.font.SysFont("consolas", 48, bold=True)
     option_font = pygame.font.SysFont("consolas", 32)
     title_text = title_font.render("Battle City", True, (255, 0, 0))
@@ -2321,11 +2385,7 @@ while True:
                 if event.key == pygame.K_F2:
                     show_grid = not show_grid
                 if event.key == pygame.K_F3:
-                    place_random_brick_wall()
-                    place_random_forest()
-                    place_random_concrete_wall()
-                    place_random_water()
-                    place_random_ice()
+                    continue
         if event.type == pygame.JOYHATMOTION:
             # Получаем значение D-pad:
             hat = event.value  # tuple (x, y)
