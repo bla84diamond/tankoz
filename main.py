@@ -13,6 +13,7 @@ if pygame.joystick.get_count() > 0:
 # Параметры отладки
 # =========================
 show_grid = False        # Видимость сетки
+show_masks = False       # Добавлено для отображения масок
 
 # =========================
 # Глобальные переменные
@@ -92,7 +93,7 @@ game_surface = pygame.Surface((GAME_WIDTH, GAME_HEIGHT))
 header_font = pygame.font.SysFont("consolas", 16, bold=True)
 
 # Загрузка спрайтов
-spritesheet = pygame.image.load("res\sprites.png").convert_alpha()
+spritesheet = pygame.image.load("res/sprites.png").convert_alpha()
 
 # Функция вибрации на джойстике
 def do_rumble(low, high, duration_ms):
@@ -1005,11 +1006,58 @@ class Bonus(pygame.sprite.Sprite):
         all_sprites.add(self)
         bonus_group.add(self)
         bonus_channel.play(bonus_appear_sound)
+        self.last_blink_time = self.spawn_time
+        self.blink_state = True
 
     def update(self):
-        # Удаляем бонус через 10 секунд
-        if pygame.time.get_ticks() - self.spawn_time > 10000:
-            self.kill()
+        now = pygame.time.get_ticks()
+        # Моргание значка каждые 250 мс
+        if now - self.last_blink_time >= 250:
+            self.blink_state = not self.blink_state
+            self.last_blink_time = now
+        if self.blink_state:
+            self.image.set_alpha(255)
+        else:
+            self.image.set_alpha(0)
+
+# Функция поиска пути
+def find_path(start, goal):
+    from collections import deque
+
+    queue = deque([start])
+    came_from = {start: None}
+
+    while queue:
+        current = queue.popleft()
+
+        if current == goal:
+            break
+
+        for direction in ["up", "down", "left", "right"]:
+            if direction == "up":
+                neighbor = (current[0], current[1] - CELL_SIZE)
+            elif direction == "down":
+                neighbor = (current[0], current[1] + CELL_SIZE)
+            elif direction == "left":
+                neighbor = (current[0] - CELL_SIZE, current[1])
+            elif direction == "right":
+                neighbor = (current[0] + CELL_SIZE, current[1])
+
+            if neighbor not in came_from and FIELD_RECT.collidepoint(neighbor):
+                queue.append(neighbor)
+                came_from[neighbor] = current
+
+    # Если путь не найден, возвращаем пустой список
+    if goal not in came_from:
+        return []
+
+    path = []
+    current = goal
+    while current != start:
+        path.append(current)
+        current = came_from[current]
+    path.reverse()
+    return path
 
 # Функция проверки попадания в штаб
 def check_hq_hit(bullet):
@@ -1245,6 +1293,7 @@ class Tank(pygame.sprite.Sprite):
         pass
 
     def update(self, input_keys=None):
+        global show_masks
         if game_over:  # Блокируем обновление позиции
             return
         if self.is_alive and self.is_player:
@@ -1331,6 +1380,11 @@ class Tank(pygame.sprite.Sprite):
 
             self.is_moving = (old_rect.x != self.rect.x or old_rect.y != self.rect.y)
             self._animate()
+            
+            # Отображение прямоугольников вокруг объектов
+            if show_masks:
+                for obstacle in obstacles:
+                    pygame.draw.rect(screen, (255, 255, 0), obstacle.rect, 1)
         else:
             self._animate()
 
@@ -1459,6 +1513,11 @@ class Enemy(Tank):
         self.destroy_time = None
         self.enemy_type = enemy_type
         self.armor_level = armor_level
+        self.path = []  # Добавляем атрибут для хранения текущего пути
+        self.target = None  # Добавляем атрибут для хранения текущей цели
+        self.last_position = self.rect.center  # Добавляем атрибут для отслеживания последней позиции
+        self.stuck_time = 0  # Добавляем атрибут для отслеживания времени застревания
+        self.max_stuck_duration = 100  # Максимальное время застревания (2 секунды)
         if enemy_type == 4:
             self.max_health = armor_level + 1
             self.health = self.max_health
@@ -1471,7 +1530,7 @@ class Enemy(Tank):
             self.bullet_speed = 5
             self.score_value = 100
         elif enemy_type == 2:
-            self.speed = 4
+            self.speed = 3
             self.bullet_speed = 6
             self.score_value = 200
         elif enemy_type == 3:
@@ -1590,11 +1649,57 @@ class Enemy(Tank):
                 return
             else:
                 enemy_stop = False  # сброс эффекта
+
         old_rect = self.rect.copy()
         now = pygame.time.get_ticks()
-        if now >= self.change_direction_time:
-            self.direction = random.choice(["up", "down", "left", "right"])
-            self.change_direction_time = now + random.randint(1000, 5000)
+
+        # Проверка на застревание
+        if self.rect.center == self.last_position:
+            self.stuck_time += now - self.last_update
+        else:
+            self.stuck_time = 0
+            self.last_position = self.rect.center
+
+        if self.stuck_time > self.max_stuck_duration:
+            self.path = []  # Сбрасываем путь
+            self.stuck_time = 0
+            self.direction = random.choice(["up", "down", "left", "right"])  # Выбираем новое направление
+
+        # Вероятность стремления к игроку или штабу
+        if random.random() < 0.3 and not self.path:
+            if player is not None and player.is_alive:
+                self.target = player.rect.center
+            else:
+                hq = next((spr for spr in obstacles if isinstance(spr, Headquarters)), None)
+                if hq and not hq.destroyed:
+                    self.target = hq.rect.center
+                else:
+                    self.target = None
+
+            if self.target:
+                self.path = find_path(self.rect.center, self.target)
+
+        # Если путь найден, следуем по нему
+        if self.path:
+            next_step = self.path[0]
+            if next_step[1] < self.rect.centery:
+                self.direction = "up"
+            elif next_step[1] > self.rect.centery:
+                self.direction = "down"
+            elif next_step[0] < self.rect.centerx:
+                self.direction = "left"
+            elif next_step[0] > self.rect.centerx:
+                self.direction = "right"
+
+            if self.rect.center == next_step:
+                self.path.pop(0)
+                if not self.path:
+                    self.target = None
+        else:
+            # Случайное движение, если нет пути
+            if random.random() < 0.1:
+                self.direction = random.choice(["up", "down", "left", "right"])
+
         if self.direction == "up":
             self.rect.y -= self.speed
         elif self.direction == "down":
@@ -1603,13 +1708,21 @@ class Enemy(Tank):
             self.rect.x -= self.speed
         elif self.direction == "right":
             self.rect.x += self.speed
+
         if not FIELD_RECT.contains(self.rect):
             self.rect = old_rect
-            self.direction = random.choice(["up", "down", "left", "right"])
+            self.direction = random.choices(["up", "down", "left", "right"], weights=[1, 3, 1, 1])[0]
         for tank in tank_group:
             if tank != self and self.rect.colliderect(tank.rect):
                 self.rect = old_rect
-                self.direction = random.choice(["up", "down", "left", "right"])
+                self.direction = random.choices(["up", "down", "left", "right"], weights=[1, 3, 1, 1])[0]
+                break
+        for obstacle in obstacles:
+            if isinstance(obstacle, Ice):
+                continue  # враги могут ездить по льду
+            if self.rect.colliderect(obstacle.rect):
+                self.rect = old_rect
+                self.direction = random.choices(["up", "down", "left", "right"], weights=[1, 3, 1, 1])[0]
                 break
         self.rect.clamp_ip(FIELD_RECT)
         
@@ -1640,6 +1753,8 @@ class Enemy(Tank):
 
         if random.random() < 0.02:
             self.shoot()
+
+        self.last_update = now  # Обновляем время последнего обновления
 
     def shoot(self):
         now = pygame.time.get_ticks()
@@ -1708,6 +1823,7 @@ class Bullet(pygame.sprite.Sprite):
         if check_hq_hit(self):
             for hq in obstacles:
                 if isinstance(hq, Headquarters) and not hq.destroyed:
+                    do_rumble(1.0, 1.0, 1000)
                     hq.destroy()
                     self.kill()
                     return
@@ -1726,6 +1842,7 @@ class Bullet(pygame.sprite.Sprite):
     def check_hq_collision(self):
         hq = next((spr for spr in obstacles if isinstance(spr, Headquarters)), None)
         if hq and self.rect.colliderect(hq.rect):
+            do_rumble(1.0, 1.0, 1000)
             hq.destroy()
             self.kill()
             return True
@@ -1950,13 +2067,20 @@ def load_level(level_num):
     obstacles.empty()
     forests.empty()
     hq_temp_walls.empty()
-    
+
     try:
         with open(f"levels/{level_num:02d}", 'r') as f:
             lines = f.read().splitlines()
     except FileNotFoundError:
         print(f"Level {level_num} not found!")
         return
+
+    # Словари для хранения объектов по координатам
+    brick_walls = {}
+    concrete_walls = {}
+    waters = {}
+    forests_dict = {}
+    ices = {}
 
     for line in lines:
         parts = line.split(',')
@@ -1972,20 +2096,42 @@ def load_level(level_num):
             grid_x, grid_y = int(parts[0]), int(parts[1])
             part = parts[2]
             obj_type = parts[3]
-            
+
             x = LEFT_MARGIN + grid_x * CELL_SIZE
             y = TOP_MARGIN + grid_y * CELL_SIZE
 
             if obj_type == 'brick':
-                BrickWall(x, y, [part]).add(obstacles, all_sprites)
+                if (x, y) not in brick_walls:
+                    brick_walls[(x, y)] = []
+                brick_walls[(x, y)].append(part)
             elif obj_type == 'concrete':
-                ConcreteWall(x, y, [part]).add(obstacles, all_sprites)
+                if (x, y) not in concrete_walls:
+                    concrete_walls[(x, y)] = []
+                concrete_walls[(x, y)].append(part)
             elif obj_type == 'water':
-                Water(x, y, [part]).add(obstacles, all_sprites)
+                if (x, y) not in waters:
+                    waters[(x, y)] = []
+                waters[(x, y)].append(part)
             elif obj_type == 'forest':
-                Forest(x, y, [part]).add(forests, all_sprites)
+                if (x, y) not in forests_dict:
+                    forests_dict[(x, y)] = []
+                forests_dict[(x, y)].append(part)
             elif obj_type == 'ice':
-                Ice(x, y, [part]).add(obstacles, all_sprites)
+                if (x, y) not in ices:
+                    ices[(x, y)] = []
+                ices[(x, y)].append(part)
+
+    # Создаем объекты из словарей
+    for (x, y), parts in brick_walls.items():
+        BrickWall(x, y, active_cells=parts).add(obstacles, all_sprites)
+    for (x, y), parts in concrete_walls.items():
+        ConcreteWall(x, y, active_cells=parts).add(obstacles, all_sprites)
+    for (x, y), parts in waters.items():
+        Water(x, y, active_cells=parts).add(obstacles, all_sprites)
+    for (x, y), parts in forests_dict.items():
+        Forest(x, y, active_cells=parts).add(forests, all_sprites)
+    for (x, y), parts in ices.items():
+        Ice(x, y, active_cells=parts).add(obstacles, all_sprites)
 
 # =========================
 # Функция перехода на уровень (экран STAGE)
@@ -2152,7 +2298,7 @@ def level_transition(level):
         ratio = elapsed / anim_duration
         current_height = int((FIELD_RECT.height // 2) * (1 - ratio))
 
-        mask_surface.fill((117, 117, 117))
+        mask_surface.fill((117, 117, 117, 255))
         pygame.draw.rect(
             mask_surface, (0, 0, 0, 0),
             (0, current_height, FIELD_RECT.width, FIELD_RECT.height - 2 * current_height)
@@ -2381,7 +2527,7 @@ while True:
                 if event.key == pygame.K_F2:
                     show_grid = not show_grid
                 if event.key == pygame.K_F3:
-                    continue
+                    show_masks = not show_masks  # Переключаем отображение масок
         if event.type == pygame.JOYHATMOTION:
             # Получаем значение D-pad:
             hat = event.value  # tuple (x, y)
@@ -2420,7 +2566,10 @@ while True:
                 spawn_anim = SpawnAnimation(chosen_pos, spawn_enemy_callback)
                 spawn_group.add(spawn_anim)
                 all_sprites.add(spawn_anim)
-            next_spawn_time = now + random.randint(1000, 7000)
+            if len(enemies) < 2:
+                next_spawn_time = now + random.randint(500, 2000)  # Сокращаем время появления новых врагов
+            else:
+                next_spawn_time = now + random.randint(1000, 7000)
         
         if enemy_stop:
             if now < enemy_stop_end_time:
@@ -2467,6 +2616,7 @@ while True:
         spawn_group.update()
         explosions.update()
         popups.update()
+        bonus_group.update()
 
         pygame.sprite.groupcollide(player_bullets, enemy_bullets, True, True)
         hits = pygame.sprite.groupcollide(player_bullets, enemies, True, False)
@@ -2514,7 +2664,6 @@ while True:
                     ### ИЗМЕНЕНИЕ:
                     # Увеличиваем глобальный уровень прокачки, но не выше 4
                     player_upgrade_level = min(4, player_upgrade_level + 1)
-                    print("Уровень танка повышен до", player_upgrade_level)
                     # Если игрок жив, сразу обновляем его параметры
                     if player is not None:
                         player.set_upgrade_level(player_upgrade_level)
@@ -2591,6 +2740,7 @@ while True:
         for hq in all_sprites:
             if isinstance(hq, Headquarters) and not hq.destroyed:
                 if pygame.sprite.spritecollideany(hq, all_bullets):
+                    do_rumble(1.0, 1.0, 1000)
                     hq.destroy()
                     break
 
@@ -2698,6 +2848,11 @@ while True:
                 next_level()
         # Очищаем замороженный кадр, если он был использован ранее
         paused_frame = None
+
+        # Отображение прямоугольников вокруг объектов
+        if show_masks:
+            for obstacle in obstacles:
+                pygame.draw.rect(screen, (255, 255, 0), obstacle.rect, 1)
     else:
         # Режим паузы: игра не обновляется, отображается предыдущий кадр с наложением мигающей надписи PAUSE
         now = pygame.time.get_ticks()
