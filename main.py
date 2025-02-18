@@ -1,6 +1,7 @@
 import pygame
 import sys
 import random
+from heapq import heappush, heappop
 
 pygame.init()
 pygame.joystick.init()
@@ -896,10 +897,39 @@ class Bonus(pygame.sprite.Sprite):
         else:
             self.image.set_alpha(0)
 
+def can_spawn_bonus_at(pos):
+    # Проверяем, не находится ли бонус в ячейке с танком игрока
+    if player and player.rect.collidepoint(pos):
+        return False
+
+    # Проверяем, не находится ли бонус в ячейке спавна врагов
+    for spawn_pos in spawn_positions:
+        if pygame.Rect(spawn_pos[0] - 16, spawn_pos[1] - 16, 32, 32).collidepoint(pos):
+            return False
+
+    # Проверяем, не находится ли бонус в ячейке штаба или ячейках, окружающих штаб
+    hq_x, hq_y = LEFT_MARGIN + 6 * CELL_SIZE, TOP_MARGIN + 12 * CELL_SIZE
+    hq_rect = pygame.Rect(hq_x - 16, hq_y - 16, 64, 64)
+    if hq_rect.collidepoint(pos):
+        return False
+
+    return True
+
+def spawn_bonus():
+    cols = GRID_COLS - 2
+    rows = GRID_ROWS - 2
+    while True:
+        rand_col = random.randint(1, cols)
+        rand_row = random.randint(1, rows)
+        bonus_x = LEFT_MARGIN + (rand_col * CELL_SIZE) - CELL_SIZE // 2
+        bonus_y = TOP_MARGIN + (rand_row * CELL_SIZE) - CELL_SIZE // 2
+        if can_spawn_bonus_at((bonus_x, bonus_y)):
+            Bonus((bonus_x, bonus_y))
+            break
+
 # Функция поиска пути
 def find_path(start, goal):
-    # Улучшенный A* алгоритм с учетом размера танка
-    from heapq import heappush, heappop
+    # Улучшенный AI алгоритм с учетом размера танка
     
     start_col = (start[0] - LEFT_MARGIN) // CELL_SIZE
     start_row = (start[1] - TOP_MARGIN) // CELL_SIZE
