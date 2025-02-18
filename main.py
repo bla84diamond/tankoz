@@ -1401,28 +1401,26 @@ class Tank(pygame.sprite.Sprite):
 
     def _do_shot(self):
         """Непосредственно создаёт пулю."""
+        offset = 20  # Смещение от края танка
         if self.direction == "up":
             bullet_x = self.rect.centerx
-            bullet_y = self.rect.top - 4
+            bullet_y = self.rect.top + offset
         elif self.direction == "down":
             bullet_x = self.rect.centerx
-            bullet_y = self.rect.bottom + 4
+            bullet_y = self.rect.bottom - offset
         elif self.direction == "left":
-            bullet_x = self.rect.left - 4
+            bullet_x = self.rect.left + offset
             bullet_y = self.rect.centery
         else:  # right
-            bullet_x = self.rect.right + 4
+            bullet_x = self.rect.right - offset
             bullet_y = self.rect.centery
 
-        # Создаём пулю
         bullet = Bullet(
-            bullet_x,
-            bullet_y,
+            bullet_x, bullet_y,
             self.direction,
             owner="player" if self.is_player else "enemy",
             speed=self.bullet_speed
         )
-        # Если уровень 4, пули бронебойные
         if self.is_player and self.armor_piercing:
             bullet.armor_piercing = True
         
@@ -1431,8 +1429,6 @@ class Tank(pygame.sprite.Sprite):
         else:
             enemy_bullets.add(bullet)
         all_sprites.add(bullet)
-
-        # Звуки, вибрация
         shoot_sound.play()
         if self.is_player:
             do_rumble(0.2, 0.2, 150)
@@ -1999,7 +1995,7 @@ def level_transition(level):
 
     if level > 1:
         final_surface = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
-        final_surface.fill((99, 99, 99))  # затемнённые отступы
+        final_surface.fill((117, 117, 117))  # затемнённые отступы
         pygame.draw.rect(final_surface, (0, 0, 0), FIELD_RECT)
 
     clock = pygame.time.Clock()
@@ -2056,7 +2052,7 @@ def level_transition(level):
         start_y = FIELD_RECT.top + (FIELD_RECT.height - 14) // 2
         
         stage_surface = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
-        stage_surface.fill((99, 99, 99))
+        stage_surface.fill((117, 117, 117))
         stage_surface.blit(stage_text_sprite, (start_x, start_y))
         
         digit_x = start_x + 80 + offset
@@ -2094,24 +2090,25 @@ def level_transition(level):
     anim_duration = 600
     start_anim = pygame.time.get_ticks()
     
-    while True:
-        now = pygame.time.get_ticks()
-        elapsed = now - start_anim
-        if elapsed > anim_duration:
-            break
+    if level > 1:
+        while True:
+            now = pygame.time.get_ticks()
+            elapsed = now - start_anim
+            if elapsed > anim_duration:
+                break
+                
+            ratio = elapsed / anim_duration
+            fill_height = int((WINDOW_HEIGHT // 2) * ratio)
             
-        ratio = elapsed / anim_duration
-        fill_height = int((WINDOW_HEIGHT // 2) * ratio)
-        
-        screen.fill((0, 0, 0))
-        pygame.draw.rect(screen, (99, 99, 99), (0, 0, WINDOW_WIDTH, fill_height))
-        pygame.draw.rect(
-            screen, (99, 99, 99),
-            (0, WINDOW_HEIGHT - fill_height, WINDOW_WIDTH, fill_height)
-        )
-        
-        pygame.display.flip()
-        pygame.time.delay(16)
+            screen.fill((0, 0, 0))
+            pygame.draw.rect(screen, (117, 117, 117), (0, 0, WINDOW_WIDTH, fill_height))
+            pygame.draw.rect(
+                screen, (117, 117, 117),
+                (0, WINDOW_HEIGHT - fill_height, WINDOW_WIDTH, fill_height)
+            )
+            
+            pygame.display.flip()
+            pygame.time.delay(16)
 
     # 1. Рисуем надпись STAGE + номер уровня на центре игрового поля
     level_digits = render_level_number(selected_level)
@@ -2121,7 +2118,7 @@ def level_transition(level):
     start_y = FIELD_RECT.top + (FIELD_RECT.height - 14) // 2
     
     stage_surface = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
-    stage_surface.fill((99, 99, 99))
+    stage_surface.fill((117, 117, 117))
     stage_surface.blit(stage_text_sprite, (start_x, start_y))
     
     digit_x = start_x + 80 + offset
@@ -2134,9 +2131,8 @@ def level_transition(level):
     screen.blit(stage_surface, (0, 0))
     pygame.display.flip()
 
-    # Ждём завершения звука
-    while pygame.mixer.get_busy():
-        pygame.time.wait(10)
+    # Ждем завершения звука
+    pygame.time.wait(3000)
 
     anim_duration = 500
     start_anim = pygame.time.get_ticks()
@@ -2144,7 +2140,7 @@ def level_transition(level):
     # Готовим финальный кадр
     mask_surface = pygame.Surface((FIELD_RECT.size), pygame.SRCALPHA)
     final_surface = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
-    final_surface.fill((99, 99, 99))
+    final_surface.fill((117, 117, 117))
     pygame.draw.rect(final_surface, (0, 0, 0), FIELD_RECT)
 
     while True:
@@ -2156,7 +2152,7 @@ def level_transition(level):
         ratio = elapsed / anim_duration
         current_height = int((FIELD_RECT.height // 2) * (1 - ratio))
 
-        mask_surface.fill((99, 99, 99))
+        mask_surface.fill((117, 117, 117))
         pygame.draw.rect(
             mask_surface, (0, 0, 0, 0),
             (0, current_height, FIELD_RECT.width, FIELD_RECT.height - 2 * current_height)
@@ -2620,7 +2616,7 @@ while True:
             if time_left <= 0:
                 deactivate_hq_boost()
 
-        game_surface.fill((99, 99, 99))
+        game_surface.fill((117, 117, 117))
         pygame.draw.rect(game_surface, (0, 0, 0), FIELD_RECT)
         if show_grid:
             for x in range(FIELD_RECT.left, FIELD_RECT.right + 1, CELL_SIZE):
