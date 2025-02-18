@@ -580,46 +580,6 @@ class BrickWall(pygame.sprite.Sprite):
     def draw(self, surface):
         surface.blit(self.image, self.rect.topleft)
 
-# Создание случайного кирпичного блока
-def place_random_brick_wall():
-    all_cells = []
-    for col in range(GRID_COLS):
-        for row in range(GRID_ROWS):
-            all_cells.append((col, row))
-
-    # Исключаем ячейки спавна игрока
-    col_player = (player_spawn_point[0] - LEFT_MARGIN) // CELL_SIZE
-    row_player = (player_spawn_point[1] - TOP_MARGIN) // CELL_SIZE
-
-    # Исключаем ячейки спавна врагов
-    enemy_spawn_cells = []
-    for pos in spawn_positions:
-        col_enemy = (pos[0] - LEFT_MARGIN) // CELL_SIZE
-        row_enemy = (pos[1] - TOP_MARGIN) // CELL_SIZE
-        enemy_spawn_cells.append((col_enemy, row_enemy))
-
-    excluded_cells = {(col_player, row_player)}
-    for c in enemy_spawn_cells:
-        excluded_cells.add(c)
-
-    valid_cells = [c for c in all_cells if c not in excluded_cells]
-
-    if valid_cells:
-        chosen_col, chosen_row = random.choice(valid_cells)
-        x = LEFT_MARGIN + chosen_col * CELL_SIZE
-        y = TOP_MARGIN + chosen_row * CELL_SIZE
-
-        # Выбираем случайное число элементов от 1 до 4 и случайное подмножество позиций
-        possible_keys = ["tl", "tr", "bl", "br"]
-        num_elements = random.randint(1, 4)
-        active_cells = tuple(random.sample(possible_keys, num_elements))
-        
-        brick = BrickWall(x, y, active_cells=active_cells)
-        obstacles.add(brick)
-        all_sprites.add(brick)
-    else:
-        print("No valid cell found for BrickWall!")
-
 # =========================
 # Класс леса (блок из 4 элементов)
 # =========================
@@ -890,92 +850,8 @@ class Ice(pygame.sprite.Sprite):
                 ice_surf.blit(base_sprite, pos)
         return ice_surf
 
-# Создание случайного лесного блока
-def place_random_forest():
-    all_cells = []
-    for col in range(GRID_COLS):
-        for row in range(GRID_ROWS):
-            all_cells.append((col, row))
-
-    if all_cells:
-        chosen_col, chosen_row = random.choice(all_cells)
-        x = LEFT_MARGIN + chosen_col * CELL_SIZE
-        y = TOP_MARGIN + chosen_row * CELL_SIZE
-
-        # Выбираем случайное число элементов от 1 до 4 и случайное подмножество позиций
-        possible_keys = ["tl", "tr", "bl", "br"]
-        num_elements = random.randint(1, 4)
-        active_cells = tuple(random.sample(possible_keys, num_elements))
-
-        f = Forest(x, y, active_cells=active_cells)
-        forests.add(f)
-        all_sprites.add(f)
-
-# Создание случайного бетонного блока
-def place_random_concrete_wall():
-    all_cells = []
-    for col in range(GRID_COLS):
-        for row in range(GRID_ROWS):
-            all_cells.append((col, row))
-
-    if all_cells:
-        chosen_col, chosen_row = random.choice(all_cells)
-        x = LEFT_MARGIN + chosen_col * CELL_SIZE
-        y = TOP_MARGIN + chosen_row * CELL_SIZE
-
-        # Выбираем случайное число элементов от 1 до 4 и случайное подмножество позиций
-        possible_keys = ["tl", "tr", "bl", "br"]
-        num_elements = random.randint(1, 4)
-        active_cells = tuple(random.sample(possible_keys, num_elements))
-
-        c = ConcreteWall(x, y, active_cells=active_cells)
-        obstacles.add(c)
-        all_sprites.add(c)
-
-# Создание случайного водного блока
-def place_random_water():
-    all_cells = []
-    for col in range(GRID_COLS):
-        for row in range(GRID_ROWS):
-            all_cells.append((col, row))
-    
-    if all_cells:
-        chosen_col, chosen_row = random.choice(all_cells)
-        x = LEFT_MARGIN + chosen_col * CELL_SIZE
-        y = TOP_MARGIN + chosen_row * CELL_SIZE
-
-        # Выбираем случайное число элементов (от 1 до 4) и случайное подмножество позиций
-        possible_keys = ["tl", "tr", "bl", "br"]
-        num_elements = random.randint(1, 4)
-        active_cells = tuple(random.sample(possible_keys, num_elements))
-        
-        water_block = Water(x, y, active_cells=active_cells)
-        obstacles.add(water_block)
-        all_sprites.add(water_block)
-
-# Создание случайного ледяного блока
-def place_random_ice():
-    all_cells = []
-    for col in range(GRID_COLS):
-        for row in range(GRID_ROWS):
-            all_cells.append((col, row))
-    
-    if all_cells:
-        chosen_col, chosen_row = random.choice(all_cells)
-        x = LEFT_MARGIN + chosen_col * CELL_SIZE
-        y = TOP_MARGIN + chosen_row * CELL_SIZE
-
-        # Выбираем случайное число элементов (от 1 до 4) и случайное подмножество позиций
-        possible_keys = ["tl", "tr", "bl", "br"]
-        num_elements = random.randint(1, 4)
-        active_cells = tuple(random.sample(possible_keys, num_elements))
-        
-        ice_block = Ice(x, y, active_cells=active_cells)
-        obstacles.add(ice_block)
-        all_sprites.add(ice_block)
-
 # =========================
-# Класс отобрвжения очков
+# Класс отображения очков
 # =========================
 class ScorePopup(pygame.sprite.Sprite):
     def __init__(self, pos, points, duration=500):
@@ -1022,42 +898,74 @@ class Bonus(pygame.sprite.Sprite):
 
 # Функция поиска пути
 def find_path(start, goal):
-    from collections import deque
+    # Улучшенный A* алгоритм с учетом размера танка
+    from heapq import heappush, heappop
+    
+    start_col = (start[0] - LEFT_MARGIN) // CELL_SIZE
+    start_row = (start[1] - TOP_MARGIN) // CELL_SIZE
+    goal_col = (goal[0] - LEFT_MARGIN) // CELL_SIZE
+    goal_row = (goal[1] - TOP_MARGIN) // CELL_SIZE
 
-    queue = deque([start])
-    came_from = {start: None}
+    open_set = []
+    heappush(open_set, (0, start_col, start_row))
+    came_from = {}
+    g_score = {(start_col, start_row): 0}
+    
+    obstacles_grid = build_obstacles_grid(radius=2)  # Учитываем размер танка 2x2 клетки
 
-    while queue:
-        current = queue.popleft()
+    while open_set:
+        current = heappop(open_set)
+        current_col, current_row = current[1], current[2]
 
-        if current == goal:
-            break
+        if (current_col, current_row) == (goal_col, goal_row):
+            path = []
+            while (current_col, current_row) in came_from:
+                path.append((
+                    LEFT_MARGIN + current_col * CELL_SIZE + CELL_SIZE//2,
+                    TOP_MARGIN + current_row * CELL_SIZE + CELL_SIZE//2
+                ))
+                current_col, current_row = came_from[(current_col, current_row)]
+            return path[::-1]
 
-        for direction in ["up", "down", "left", "right"]:
-            if direction == "up":
-                neighbor = (current[0], current[1] - CELL_SIZE)
-            elif direction == "down":
-                neighbor = (current[0], current[1] + CELL_SIZE)
-            elif direction == "left":
-                neighbor = (current[0] - CELL_SIZE, current[1])
-            elif direction == "right":
-                neighbor = (current[0] + CELL_SIZE, current[1])
+        for dx, dy in [(-1,0), (1,0), (0,-1), (0,1), (-1,-1), (-1,1), (1,-1), (1,1)]:
+            new_col = current_col + dx
+            new_row = current_row + dy
+            if 0 <= new_col < GRID_COLS and 0 <= new_row < GRID_ROWS:
+                if is_area_clear(new_col, new_row, radius=1):
+                    tentative_g = g_score[(current_col, current_row)] + 1
+                    if (new_col, new_row) not in g_score or tentative_g < g_score[(new_col, new_row)]:
+                        came_from[(new_col, new_row)] = (current_col, current_row)
+                        g_score[(new_col, new_row)] = tentative_g
+                        f_score = tentative_g + heuristic(new_col, new_row, goal_col, goal_row)
+                        heappush(open_set, (f_score, new_col, new_row))
 
-            if neighbor not in came_from and FIELD_RECT.collidepoint(neighbor):
-                queue.append(neighbor)
-                came_from[neighbor] = current
+    return []
 
-    # Если путь не найден, возвращаем пустой список
-    if goal not in came_from:
-        return []
+def heuristic(col, row, goal_col, goal_row):
+    return abs(col - goal_col) + abs(row - goal_row)
 
-    path = []
-    current = goal
-    while current != start:
-        path.append(current)
-        current = came_from[current]
-    path.reverse()
-    return path
+def is_area_clear(col, row, radius=1):
+    obstacles_grid = build_obstacles_grid(radius)
+    # Проверяем область 3x3 для проходимости
+    for i in range(-radius, radius+1):
+        for j in range(-radius, radius+1):
+            if 0 <= row + j < GRID_ROWS and 0 <= col + i < GRID_COLS:
+                if obstacles_grid[row+j][col+i] != 0:
+                    return False
+    return True
+
+def build_obstacles_grid(radius=1):
+    grid = [[0 for _ in range(GRID_COLS)] for _ in range(GRID_ROWS)]
+    for obstacle in obstacles:
+        if isinstance(obstacle, (BrickWall, ConcreteWall, Water)):
+            col = (obstacle.rect.left - LEFT_MARGIN) // CELL_SIZE
+            row = (obstacle.rect.top - TOP_MARGIN) // CELL_SIZE
+            for i in range(-radius, radius + 1):
+                for j in range(-radius, radius + 1):
+                    if 0 <= col + i < GRID_COLS and 0 <= row + j < GRID_ROWS:
+                        if obstacle.mask.get_at((col + i, row + j)):
+                            grid[row + j][col + i] = 1
+    return grid
 
 # Функция проверки попадания в штаб
 def check_hq_hit(bullet):
@@ -1434,7 +1342,7 @@ class Tank(pygame.sprite.Sprite):
             # Обычный выстрел (кулдаун 500 мс)
             if now >= self.shoot_cooldown and self.is_alive:
                 self._do_shot()
-                self.shoot_cooldown = now + 500
+                self.shoot_cooldown = now + 100
         else:
             # Двойной выстрел
             if (now - self.last_shot_time) > 100:
@@ -1442,12 +1350,12 @@ class Tank(pygame.sprite.Sprite):
             
             if now >= self.shoot_cooldown and self.is_alive:
                 self._do_shot()
-                self.shots_in_burst += 1
+                self.shots_in_burst += 100
                 self.last_shot_time = now
                 
                 if self.shots_in_burst >= 2:
                     # после второго выстрела кулдаун 500
-                    self.shoot_cooldown = now + 500
+                    self.shoot_cooldown = now + 100
                     self.shots_in_burst = 0
                 else:
                     # между первым и вторым — не более 100 мс
@@ -1455,18 +1363,18 @@ class Tank(pygame.sprite.Sprite):
 
     def _do_shot(self):
         """Непосредственно создаёт пулю."""
-        offset = 20  # Смещение от края танка
+        offset = 1  # Смещение от края танка
         if self.direction == "up":
             bullet_x = self.rect.centerx
-            bullet_y = self.rect.top + offset
+            bullet_y = self.rect.top - offset
         elif self.direction == "down":
             bullet_x = self.rect.centerx
-            bullet_y = self.rect.bottom - offset
+            bullet_y = self.rect.bottom + offset
         elif self.direction == "left":
-            bullet_x = self.rect.left + offset
+            bullet_x = self.rect.left - offset
             bullet_y = self.rect.centery
         else:  # right
-            bullet_x = self.rect.right - offset
+            bullet_x = self.rect.right + offset
             bullet_y = self.rect.centery
 
         bullet = Bullet(
@@ -1480,12 +1388,12 @@ class Tank(pygame.sprite.Sprite):
         
         if self.is_player:
             player_bullets.add(bullet)
+            shoot_sound.play()  # Проигрываем звук выстрела только для игрока
+            do_rumble(0.2, 0.2, 150)
         else:
             enemy_bullets.add(bullet)
+        
         all_sprites.add(bullet)
-        shoot_sound.play()
-        if self.is_player:
-            do_rumble(0.2, 0.2, 150)
 
     def destroy(self):
         if self.is_player:
@@ -1517,13 +1425,19 @@ class Enemy(Tank):
         self.target = None  # Добавляем атрибут для хранения текущей цели
         self.last_position = self.rect.center  # Добавляем атрибут для отслеживания последней позиции
         self.stuck_time = 0  # Добавляем атрибут для отслеживания времени застревания
-        self.max_stuck_duration = 100  # Максимальное время застревания (2 секунды)
+        self.max_stuck_duration = 5000  # Максимальное время застревания (5 секунд)
+        self.distance_to_hq = float('inf')  # Добавляем атрибут для хранения расстояния до штаба
+        self.can_double_shot = False  # Добавляем атрибут can_double_shot
+        self.enemy_shoot_cooldown = 0  # Добавляем атрибут для кулдауна выстрелов врагов
+        self.stuck_counter = 0  # Добавляем атрибут stuck_counter
         if enemy_type == 4:
             self.max_health = armor_level + 1
             self.health = self.max_health
             self._update_color()
         self.image = self.sprites[self.direction][self.current_sprite]
         self.rect = self.image.get_rect(center=self.rect.center)
+        # Уменьшаем интервал анимации для врагов
+        self.animation_interval = 30  # Была 60 мс, теперь 30 мс
         
         if enemy_type == 1:
             self.speed = 2
@@ -1551,6 +1465,62 @@ class Enemy(Tank):
         self.blink_state = False
         self.last_blink = 0
     
+    def shoot(self):
+        if game_over:  # Блокируем стрельбу при game_over
+            return
+
+        now = pygame.time.get_ticks()
+        
+        # Проверяем, есть ли активные пули
+        if self.is_player:
+            active_bullets = player_bullets
+        else:
+            active_bullets = enemy_bullets
+
+        if any(bullet.owner == ("player" if self.is_player else "enemy") for bullet in active_bullets):
+            return  # Если есть активные пули, не стреляем
+
+        if not self.is_player:
+            if now < self.enemy_shoot_cooldown:
+                return  # Если кулдаун врага не истек, не стреляем
+
+        if not self.can_double_shot:
+            # Обычный выстрел (кулдаун 500 мс)
+            if now >= self.shoot_cooldown and self.is_alive:
+                self._do_shot()
+                self.shoot_cooldown = now + 100
+                if not self.is_player:
+                    self.enemy_shoot_cooldown = now + 1000  # Устанавливаем кулдаун для врагов
+        else:
+            # Двойной выстрел
+            if (now - self.last_shot_time) > 100:
+                self.shots_in_burst = 0
+            
+            if now >= self.shoot_cooldown and self.is_alive:
+                self._do_shot()
+                self.shots_in_burst += 100
+                self.last_shot_time = now
+                
+                if self.shots_in_burst >= 2:
+                    # после второго выстрела кулдаун 500
+                    self.shoot_cooldown = now + 100
+                    self.shots_in_burst = 0
+                else:
+                    # между первым и вторым — не более 100 мс
+                    self.shoot_cooldown = now + 100
+                if not self.is_player:
+                    self.enemy_shoot_cooldown = now + 1000  # Устанавливаем кулдаун для врагов
+    
+    def _animate(self):
+        now = pygame.time.get_ticks()
+        if self.is_moving:
+            if now - self.last_update > self.animation_interval:
+                self.last_update = now
+                self.current_sprite = (self.current_sprite + 1) % 2
+        else:
+            self.current_sprite = 0
+        self.image = self.sprites[self.direction][self.current_sprite]
+
     def _update_color(self):
         if self.enemy_type == 4:
             if self.armor_level not in ARMOR_COLORS:
@@ -1642,6 +1612,34 @@ class Enemy(Tank):
             Bonus((bonus_x, bonus_y))
             bonus_active = True
 
+    def choose_target(self):
+        # После уничтожения 15 врагов усиливаем атаку на штаб
+        hq = next((spr for spr in obstacles if isinstance(spr, Headquarters)), None)
+        attack_hq = (enemies_to_spawn < 5 or random.random() < 0.4) and hq
+        
+        if attack_hq and not hq.destroyed:
+            self.target = hq.rect.center
+            self.target_priority = 0.8  # Повышенный приоритет
+        elif player and player.is_alive:
+            self.target = player.rect.center
+            self.target_priority = 0.4
+        else:
+            self.target = None
+
+    def handle_stuck(self):
+        # Усовершенствованная система определения застревания
+        if self.stuck_counter > 15:
+            self.speed *= 1.2  # Временно увеличиваем скорость
+            self.change_direction()
+            self.stuck_counter = 0
+            
+            # Создаем временные проходы в препятствиях
+            if random.random() < 0.3:
+                for obstacle in obstacles:
+                    if self.rect.colliderect(obstacle.rect):
+                        if isinstance(obstacle, BrickWall):
+                            obstacle.take_damage(Bullet(0,0, 'up', owner='enemy', speed=0))
+
     def ai_update(self):
         global enemy_stop, enemy_stop_end_time
         if enemy_stop:
@@ -1661,20 +1659,12 @@ class Enemy(Tank):
             self.last_position = self.rect.center
 
         if self.stuck_time > self.max_stuck_duration:
-            self.path = []  # Сбрасываем путь
+            self.handle_stuck()  # Используем функцию handle_stuck
             self.stuck_time = 0
-            self.direction = random.choice(["up", "down", "left", "right"])  # Выбираем новое направление
 
         # Вероятность стремления к игроку или штабу
-        if random.random() < 0.3 and not self.path:
-            if player is not None and player.is_alive:
-                self.target = player.rect.center
-            else:
-                hq = next((spr for spr in obstacles if isinstance(spr, Headquarters)), None)
-                if hq and not hq.destroyed:
-                    self.target = hq.rect.center
-                else:
-                    self.target = None
+        if not self.path or random.random() < 0.01:  # Уменьшаем вероятность случайного изменения пути
+            self.choose_target()  # Используем функцию choose_target
 
             if self.target:
                 self.path = find_path(self.rect.center, self.target)
@@ -1695,10 +1685,10 @@ class Enemy(Tank):
                 self.path.pop(0)
                 if not self.path:
                     self.target = None
-        else:
+        #else:
             # Случайное движение, если нет пути
-            if random.random() < 0.1:
-                self.direction = random.choice(["up", "down", "left", "right"])
+            #№if random.random() < 0.05:  # Уменьшаем вероятность случайного изменения направления
+            #    self.direction = random.choice(["up", "down", "left", "right"])
 
         if self.direction == "up":
             self.rect.y -= self.speed
@@ -1720,10 +1710,18 @@ class Enemy(Tank):
         for obstacle in obstacles:
             if isinstance(obstacle, Ice):
                 continue  # враги могут ездить по льду
-            if self.rect.colliderect(obstacle.rect):
-                self.rect = old_rect
-                self.direction = random.choices(["up", "down", "left", "right"], weights=[1, 3, 1, 1])[0]
-                break
+            if hasattr(obstacle, 'mask'):
+                tank_mask = pygame.mask.from_surface(self.image)
+                offset = (obstacle.rect.x - self.rect.x, obstacle.rect.y - self.rect.y)
+                if tank_mask.overlap(obstacle.mask, offset):
+                    self.rect = old_rect
+                    self.direction = random.choices(["up", "down", "left", "right"], weights=[1, 3, 1, 1])[0]
+                    break
+            else:
+                if self.rect.colliderect(obstacle.rect):
+                    self.rect = old_rect
+                    self.direction = random.choices(["up", "down", "left", "right"], weights=[1, 3, 1, 1])[0]
+                    break
         self.rect.clamp_ip(FIELD_RECT)
         
         # Обновляем флаг движения: если позиция изменилась – считаем, что танк движется
@@ -1740,6 +1738,19 @@ class Enemy(Tank):
                 self.direction = random.choice(["up", "down", "left", "right"])
                 break
 
+        # Проверка на наличие кирпичной стены перед врагом
+        if random.random() < 0.9:  # Вероятность 90%
+            for obstacle in obstacles:
+                if isinstance(obstacle, BrickWall):
+                    if self.direction == "up" and self.rect.top > obstacle.rect.bottom and self.rect.left < obstacle.rect.right and self.rect.right > obstacle.rect.left:
+                        self.shoot()
+                    elif self.direction == "down" and self.rect.bottom < obstacle.rect.top and self.rect.left < obstacle.rect.right and self.rect.right > obstacle.rect.left:
+                        self.shoot()
+                    elif self.direction == "left" and self.rect.left > obstacle.rect.right and self.rect.top < obstacle.rect.bottom and self.rect.bottom > obstacle.rect.top:
+                        self.shoot()
+                    elif self.direction == "right" and self.rect.right < obstacle.rect.left and self.rect.top < obstacle.rect.bottom and self.rect.bottom > obstacle.rect.top:
+                        self.shoot()
+
         # Мерцание для специальных танков (включая получивших урон не-тяжелых)
         if self.is_special:
             now = pygame.time.get_ticks()
@@ -1755,31 +1766,6 @@ class Enemy(Tank):
             self.shoot()
 
         self.last_update = now  # Обновляем время последнего обновления
-
-    def shoot(self):
-        now = pygame.time.get_ticks()
-        
-        # Проверяем, есть ли активные пули
-        if any(bullet.owner == "enemy" for bullet in enemy_bullets):
-            return  # Если есть активные пули, не стреляем
-
-        if now >= self.shoot_cooldown and self.is_alive:
-            if self.direction == "up":
-                bullet_x = self.rect.centerx
-                bullet_y = self.rect.top - 4
-            elif self.direction == "down":
-                bullet_x = self.rect.centerx
-                bullet_y = self.rect.bottom + 4
-            elif self.direction == "left":
-                bullet_x = self.rect.left - 4
-                bullet_y = self.rect.centery
-            elif self.direction == "right":
-                bullet_x = self.rect.right + 4
-                bullet_y = self.rect.centery
-            bullet = Bullet(bullet_x, bullet_y, self.direction, owner="enemy")
-            enemy_bullets.add(bullet)
-            all_sprites.add(bullet)
-            self.shoot_cooldown = pygame.time.get_ticks() + 500
 
 # =========================
 # Класс Bullet – пуля
@@ -2015,12 +2001,18 @@ def spawn_enemy_callback(pos):
     
     # Определение типа танка
     enemy_type = 1
-    if enemies_to_spawn > 15:  # Первые 5 танков
-        enemy_type = random.choice([1, 2, 3])
-    elif enemies_to_spawn > 10:
-        enemy_type = random.choice([1, 2, 3, 4])
+    # Генерация врагов с разными характеристиками
+    if enemies_to_spawn > 15:
+        enemy_type = random.choices([1,2,3], weights=[5,3,2])[0]  # Обычные танки
+    elif enemies_to_spawn > 5:
+        enemy_type = random.choices([2,3,4], weights=[4,3,3])[0]  # Средние
     else:
-        enemy_type = 4 if random.random() < 0.3 else random.choice([1, 2, 3])
+        enemy_type = 4 if random.random() < 0.7 else 3  # Тяжелые и скорострельные
+        
+    enemy = Enemy(pos[0], pos[1], initial_direction, enemy_type=enemy_type)
+    if enemy_type == 4:
+        enemy.speed = 1.5
+        enemy.target_priority = 0.8  # Тяжелые танки целятся в штаб
     
     # Создаём временного врага (пока не добавляем в группы).
     if enemy_type == 4:
@@ -2894,7 +2886,6 @@ while True:
             pygame.mixer.stop()
             
             # Полный сброс глобальных переменных
-            #global current_level, enemies_to_spawn, enemies_remaining_level, player
             player = None
             current_level = 1
             enemies_to_spawn = 20
