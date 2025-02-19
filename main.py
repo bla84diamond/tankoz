@@ -6,9 +6,14 @@ from heapq import heappush, heappop
 pygame.init()
 pygame.joystick.init()
 joystick = None
+joystick_type = "default"
 if pygame.joystick.get_count() > 0:
     joystick = pygame.joystick.Joystick(0)
     joystick.init()
+    joystick_name = joystick.get_name()
+    print(f"Joystick initialized: {joystick_name}")
+    if "Dual" in joystick_name:
+        joystick_type = "playstation"
 
 # =========================
 # Параметры отладки
@@ -2171,6 +2176,8 @@ def level_transition(level):
     last_change_time = 0
     acceleration_delay = 500  # Задержка перед ускоренным изменением
     acceleration_interval = 90  # Интервал при ускорении
+    last_start_press_time = 0  # Время последнего нажатия кнопки start
+
     while selecting:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -2180,34 +2187,43 @@ def level_transition(level):
         keys = pygame.key.get_pressed()
         joystick_buttons = {}
         if joystick:
-            joystick_buttons['A'] = joystick.get_button(0)  # Кнопка A
-            joystick_buttons['B'] = joystick.get_button(1)  # Кнопка B
+            if joystick_type == "playstation":
+                joystick_buttons['left'] = joystick.get_button(0)
+                joystick_buttons['right'] = joystick.get_button(1)
+                joystick_buttons['start'] = joystick.get_button(6)
+            else:
+                joystick_buttons['left'] = joystick.get_button(0)
+                joystick_buttons['right'] = joystick.get_button(1)
+                joystick_buttons['start'] = joystick.get_button(7)
         
         # Изменение уровня
         change_amount = 0
         now = pygame.time.get_ticks()
         if last_change_time == 0:
-            if keys[pygame.K_LEFT] or joystick_buttons.get('A'):
+            if keys[pygame.K_LEFT] or joystick_buttons.get('left'):
                 change_amount -= 1
                 last_change_time = now
-            if keys[pygame.K_RIGHT] or joystick_buttons.get('B'):
+            if keys[pygame.K_RIGHT] or joystick_buttons.get('right'):
                 change_amount += 1
                 last_change_time = now
         else:
-                # Ускоренное изменение после задержки
-                if now - last_change_time > acceleration_delay:
-                    if keys[pygame.K_LEFT] or joystick_buttons.get('A'):
-                        change_amount -= 1
-                        last_change_time = now - acceleration_delay + acceleration_interval
-                    if keys[pygame.K_RIGHT] or joystick_buttons.get('B'):
-                        change_amount += 1
-                        last_change_time = now - acceleration_delay + acceleration_interval
+            # Ускоренное изменение после задержки
+            if now - last_change_time > acceleration_delay:
+                if keys[pygame.K_LEFT] or joystick_buttons.get('left'):
+                    change_amount -= 1
+                    last_change_time = now - acceleration_delay + acceleration_interval
+                if keys[pygame.K_RIGHT] or joystick_buttons.get('right'):
+                    change_amount += 1
+                    last_change_time = now - acceleration_delay + acceleration_interval
 
         selected_level = max(1, min(35, selected_level + change_amount))
         
         # Подтверждение выбора
-        if keys[pygame.K_SPACE] or keys[pygame.K_RETURN] or joystick.get_button(7):  # Start кнопка для подтверждения
-            selecting = False
+        if keys[pygame.K_SPACE] or keys[pygame.K_RETURN] or joystick_buttons.get('start'):
+            # Проверяем время последнего нажатия кнопки start
+            if now - last_start_press_time > 4000:  # 4с задержка
+                selecting = False
+                last_start_press_time = now
         
         # Отрисовка
         screen.fill((0, 0, 0))
@@ -2418,8 +2434,7 @@ def main_menu():
     selection_index = 0
     clock = pygame.time.Clock()
     selected_mode = None
-    joystick_debounce = 0  # Защита от двойного срабатывания
-
+    
     # Параметры анимации для индикатора выбора (танка)
     indicator_anim_index = 0
     last_indicator_anim_update = pygame.time.get_ticks()
@@ -2456,17 +2471,22 @@ def main_menu():
                     if event.key == pygame.K_SPACE:
                         selected_mode = selection_index
             # Обработка джойстика
-            if event.type == pygame.JOYHATMOTION:
-                if now >= menu_start_time + 1000 + slide_duration and now - joystick_debounce > 200:
-                    if event.value[1] == 1:
-                        selection_index = (selection_index - 1) % len(option_texts)
-                        joystick_debounce = now
-                    elif event.value[1] == -1:
-                        selection_index = (selection_index + 1) % len(option_texts)
-                        joystick_debounce = now
             if event.type == pygame.JOYBUTTONDOWN:
                 if now >= menu_start_time + 1000 + slide_duration:
-                    selected_mode = selection_index
+                    if joystick_type == "playstation":
+                        if event.button == 11:
+                            selection_index = (selection_index - 1) % len(option_texts)
+                        elif event.button == 12:
+                            selection_index = (selection_index + 1) % len(option_texts)
+                        elif event.button == 6:
+                            selected_mode = selection_index
+                    else:
+                        if event.button == 0:
+                            selection_index = (selection_index - 1) % len(option_texts)
+                        elif event.button == 1:
+                            selection_index = (selection_index + 1) % len(option_texts)
+                        elif event.button == 7:
+                            selected_mode = selection_index
 
         # Рисуем меню
         menu_surface = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
@@ -2555,29 +2575,48 @@ while True:
             hat = event.value  # tuple (x, y)
             # Вы можете сохранить его в глобальной переменной, например, joystick_hat = hat
         if event.type == pygame.JOYBUTTONDOWN:
-            # Кнопка Start (пауза)
-            if event.button == 7:
-                paused = not paused
-                pause_sound.play()
-                if paused:
-                    player_sound_channel.stop()
-                    current_player_sound = None
-                else:
-                    current_player_sound = None
-                    paused_frame = None
-            # Кнопка Back (щит)
-            elif event.button == 6 and not paused:  # Select/Back
-                if player is not None:
-                    player.shield_active = not player.shield_active
-                    player.shield_unlimited = True
-                    if player.shield_active:
-                        player.shield_start = pygame.time.get_ticks()
-                        shield_end_time = float('inf')
+            if joystick_type == "playstation":
+                if event.button == 6:
+                    paused = not paused
+                    pause_sound.play()
+                    if paused:
+                        player_sound_channel.stop()
+                        current_player_sound = None
                     else:
-                        shield_end_time = 0
-            # Остальные кнопки (только если не пауза)
-            elif not paused and player is not None and event.button != 6 and event.button != 7:
-                player.shoot()
+                        current_player_sound = None
+                        paused_frame = None
+                elif event.button == 4 and not paused:
+                    if player is not None:
+                        player.shield_active = not player.shield_active
+                        player.shield_unlimited = True
+                        if player.shield_active:
+                            player.shield_start = pygame.time.get_ticks()
+                            shield_end_time = float('inf')
+                        else:
+                            shield_end_time = 0
+                elif not paused and player is not None and event.button != 4 and event.button != 6 and event.button != 11 and event.button != 12 and event.button != 13 and event.button != 14:
+                    player.shoot()
+            else:
+                if event.button == 7:
+                    paused = not paused
+                    pause_sound.play()
+                    if paused:
+                        player_sound_channel.stop()
+                        current_player_sound = None
+                    else:
+                        current_player_sound = None
+                        paused_frame = None
+                elif event.button == 6 and not paused:
+                    if player is not None:
+                        player.shield_active = not player.shield_active
+                        player.shield_unlimited = True
+                        if player.shield_active:
+                            player.shield_start = pygame.time.get_ticks()
+                            shield_end_time = float('inf')
+                        else:
+                            shield_end_time = 0
+                elif not paused and player is not None and event.button != 6 and event.button != 7:
+                    player.shoot()
     if not paused:
         now = pygame.time.get_ticks()
         # Спавн врагов
@@ -2616,19 +2655,33 @@ while True:
 
         # Если джойстик подключён, обновляем словарь input_keys по данным D-pad
         if joystick is not None:
-            hat = joystick.get_hat(0)  # Получаем значение D-pad (tuple (x, y))
-            if hat[1] == 1:
-                input_keys[pygame.K_UP] = True
-                input_keys[pygame.K_w] = True
-            elif hat[1] == -1:
-                input_keys[pygame.K_DOWN] = True
-                input_keys[pygame.K_s] = True
-            if hat[0] == -1:
-                input_keys[pygame.K_LEFT] = True
-                input_keys[pygame.K_a] = True
-            elif hat[0] == 1:
-                input_keys[pygame.K_RIGHT] = True
-                input_keys[pygame.K_d] = True
+            if joystick_type == "playstation":
+                if joystick.get_button(11):
+                    input_keys[pygame.K_UP] = True
+                    input_keys[pygame.K_w] = True
+                elif joystick.get_button(12):
+                    input_keys[pygame.K_DOWN] = True
+                    input_keys[pygame.K_s] = True
+                if joystick.get_button(13):
+                    input_keys[pygame.K_LEFT] = True
+                    input_keys[pygame.K_a] = True
+                elif joystick.get_button(14):
+                    input_keys[pygame.K_RIGHT] = True
+                    input_keys[pygame.K_d] = True
+            else:
+                hat = joystick.get_hat(0)  # Получаем значение D-pad (tuple (x, y))
+                if hat[1] == 1:
+                    input_keys[pygame.K_UP] = True
+                    input_keys[pygame.K_w] = True
+                elif hat[1] == -1:
+                    input_keys[pygame.K_DOWN] = True
+                    input_keys[pygame.K_s] = True
+                if hat[0] == -1:
+                    input_keys[pygame.K_LEFT] = True
+                    input_keys[pygame.K_a] = True
+                elif hat[0] == 1:
+                    input_keys[pygame.K_RIGHT] = True
+                    input_keys[pygame.K_d] = True
         if player is not None:
             player.update(input_keys)
         player_bullets.update()
