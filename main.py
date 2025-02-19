@@ -52,6 +52,7 @@ player_lives = 3
 game_over = False
 game_over_phase = 0  # 0 - движение спрайта, 1 - ожидание, 2 - переход в меню
 game_over_sprite = None
+last_explosion_times = {} # для отслеживания времени последнего взрыва
 
 # =========================
 # Глобальные переменные для HQ Boost
@@ -623,19 +624,11 @@ class Forest(pygame.sprite.Sprite):
 # =========================
 class ConcreteWall(pygame.sprite.Sprite):
     def __init__(self, x, y, active_cells=("tl", "tr", "bl", "br")):
-        """
-        Шаблон блока бетонной стены, состоящего из 4 элементов 16x16.
-        Элементы бетонного блока разрушаются только игроком, прокачанным до 4 уровня.
-        При попадании по бетонному блоку воспроизводится звук столкновения (как от стены вокруг поля)
-        и эффект взрыва. Если условия для разрушения выполнены, уничтожается один или несколько элементов
-        блока (аналогично кирпичным блокам).
-        """
         super().__init__()
         self.active_cells = set(active_cells)
         self.rect = pygame.Rect(x, y, 32, 32)
         self.base_x = 512
         self.base_y = 144
-        # Инициализируем клетки для активных элементов
         self.cells = {}
         for key in ("tl", "tr", "bl", "br"):
             if key in self.active_cells:
@@ -652,7 +645,7 @@ class ConcreteWall(pygame.sprite.Sprite):
                 continue
             cell = self.cells[key]
             if cell["damage"] >= 16:
-                continue  # элемент уничтожен
+                continue
             cell_surf = pygame.Surface((16, 16), pygame.SRCALPHA)
             if cell["damage"] == 0 or cell["side"] is None:
                 cell_surf.blit(base_sprite, (0, 0))
@@ -681,30 +674,22 @@ class ConcreteWall(pygame.sprite.Sprite):
         self.mask = pygame.mask.from_surface(self.image)
 
     def take_damage(self, bullet):
-        """
-        Обрабатывает попадание пули.
-        Если пуля выпущена игроком и глобальный уровень player_upgrade_level равен 4,
-        производится разрушение элемента (или элементов) бетонного блока, аналогично BrickWall.
-        В противном случае просто воспроизводится звук столкновения и эффект взрыва.
-        """
         global player_upgrade_level
-        # Если игрок не прокачан до 4 уровня – просто проигрываем эффект столкновения
+        explosion_created = False
         if not (bullet.owner == "player" and player_upgrade_level == 4):
             wall_sound.play()
-            explosion = HitExplosion(bullet.rect.center)
-            explosions.add(explosion)
-            all_sprites.add(explosion)
+            if not explosion_created:
+                create_hit_explosion(bullet.rect.center)
+                explosion_created = True
             return True
 
         local_x = bullet.rect.centerx - self.rect.x
         local_y = bullet.rect.centery - self.rect.y
         threshold = 6
-        # Для бетонного блока используем полное разрушение элемента (damage_value = 16)
         damage_value = 16
         updated = False
         cells_to_destroy = []
 
-        # Обработка горизонтальных попаданий
         if bullet.direction in ("left", "right"):
             if bullet.direction == "left":
                 default_col = "right"
@@ -732,7 +717,6 @@ class ConcreteWall(pygame.sprite.Sprite):
                 elif fallback_key in self.cells and self.cells[fallback_key]["damage"] < 16:
                     cells_to_destroy.append(fallback_key)
 
-        # Обработка вертикальных попаданий
         elif bullet.direction in ("top", "up", "bottom", "down"):
             if bullet.direction in ("top", "up"):
                 default_row = "bottom"
@@ -770,19 +754,21 @@ class ConcreteWall(pygame.sprite.Sprite):
         else:
             return True
 
-        # Удаляем повторения
         cells_to_destroy = list(set(cells_to_destroy))
+        explosion_created = False
         for key in cells_to_destroy:
             if self.cells[key]["damage"] < 16:
                 self.cells[key]["damage"] = damage_value
                 self.cells[key]["side"] = hit_side
                 updated = True
+                if not explosion_created:
+                    create_hit_explosion(bullet.rect.center)
+                    explosion_created = True
 
         if updated:
             if bullet.owner == "player":
-                destroy_sound.play()
+                wall_sound.play()
             self.update_image()
-        # Если все активные элементы уничтожены, удаляем объект
         if all(self.cells[k]["damage"] >= 16 for k in self.cells):
             self.kill()
         return True
@@ -1051,7 +1037,6 @@ class Headquarters(pygame.sprite.Sprite):
 class HitExplosion(pygame.sprite.Sprite):
     def __init__(self, pos):
         super().__init__()
-        # Можно оставить разброс ±3 пикс., как было, чтобы "вспышка" выглядела рандомно
         self.pos = (pos[0] + random.randint(-3, 3), pos[1] + random.randint(-3, 3))
         frame0 = get_sprite(511, 256, 32, 32)
         frame1 = get_sprite(544, 256, 32, 32)
@@ -1070,6 +1055,17 @@ class HitExplosion(pygame.sprite.Sprite):
             self.image = self.frames[index]
         else:
             self.kill()
+
+def create_hit_explosion(pos):
+    global last_explosion_times
+    current_time = pygame.time.get_ticks()
+    if pos in last_explosion_times:
+        if current_time - last_explosion_times[pos] < 200:  # 200 мс интервал
+            return
+    last_explosion_times[pos] = current_time
+    explosion = HitExplosion(pos)
+    explosions.add(explosion)
+    all_sprites.add(explosion)
 
 # =========================
 # Класс Explosion – анимация взрыва (5 кадров, 500 мс)
@@ -1855,9 +1851,7 @@ class Bullet(pygame.sprite.Sprite):
         if not FIELD_RECT.collidepoint(self.rect.center):
             if self.owner == "player":
                 wall_sound.play()
-            explosion = HitExplosion(old_pos)
-            explosions.add(explosion)
-            all_sprites.add(explosion)
+            create_hit_explosion(old_pos)
             self.kill()
 
     def check_hq_collision(self):
@@ -1883,27 +1877,26 @@ class Bullet(pygame.sprite.Sprite):
         for obstacle in hits:
             if isinstance(obstacle, BrickWall):
                 if obstacle.take_damage(self):
-                    explosion = HitExplosion(old_pos)
-                    explosions.add(explosion)
-                    all_sprites.add(explosion)
+                    create_hit_explosion(old_pos)
                     self.kill()
                     return True
             # Бетонная стена
             elif isinstance(obstacle, ConcreteWall):
                 # Если пуля от игрока и его уровень прокачки 4 – разрушаем элемент (аналогично кирпичной стене)
+                explosion_created = False
                 if self.owner == "player" and player_upgrade_level == 4:
                     if obstacle.take_damage(self):  # Реализуйте аналогичную логику take_damage для ConcreteWall
-                        explosion = HitExplosion(old_pos)
-                        explosions.add(explosion)
-                        all_sprites.add(explosion)
+                        if not explosion_created:
+                            create_hit_explosion(self.rect.center)
+                            explosion_created = True
                         self.kill()
                         return
                 # В противном случае — воспроизводим стандартный звук столкновения и эффект взрыва
                 if self.owner == "player":
                     wall_sound.play()
-                explosion = HitExplosion(old_pos)
-                explosions.add(explosion)
-                all_sprites.add(explosion)
+                    if not explosion_created:
+                        create_hit_explosion(self.rect.center)
+                        explosion_created = True
                 self.kill()
                 return
 
@@ -2697,9 +2690,7 @@ while True:
         hits = pygame.sprite.groupcollide(player_bullets, enemies, True, False)
         for bullet, hit_enemies in hits.items():
             # Создаём короткую вспышку в месте попадания
-            explosion = HitExplosion(bullet.rect.center)
-            explosions.add(explosion)
-            all_sprites.add(explosion)
+            create_hit_explosion(bullet.rect.center)
 
             for enemy in hit_enemies:
                 if enemy.is_alive:
@@ -2764,9 +2755,7 @@ while True:
             if player_hits and (not hasattr(player, "shield_active") or not player.shield_active):
                 # Для каждой пули, попавшей в игрока
                 for bullet in player_hits:
-                    explosion = HitExplosion(bullet.rect.center)  # Берём позицию конкретной пули
-                    explosions.add(explosion)
-                    all_sprites.add(explosion)
+                    create_hit_explosion(bullet.rect.center)
                 do_rumble(1.0, 1.0, 700)
                 player.destroy()
                 player_respawn_time = now + 3000
