@@ -470,43 +470,29 @@ forests = pygame.sprite.Group()          # Группа леса
 # =========================
 class BrickWall(pygame.sprite.Sprite):
     def __init__(self, x, y, active_cells=("tl", "tr", "bl", "br")):
-        """
-        Блок кирпичной стены, состоящий из 1, 2, 3 или 4 элементов 16x16.
-        По умолчанию создается полный блок (4 элемента) размером 32x32.
-        Спрайт для одного элемента находится по координатам (512,128).
-        
-        Логика повреждений остаётся прежней – для каждого активного элемента считается урон.
-        Если пуля попадает в область, где расположено два соседних элемента, урон наносится обоим.
-        """
         super().__init__()
         self.active_cells = set(active_cells)
-        # Для упрощения размер блока всегда 32x32 (даже если не все ячейки активны)
         self.rect = pygame.Rect(x, y, 32, 32)
         self.base_x = 512
         self.base_y = 128
-        # Инициализируем словарь клеток только для активных элементов
         self.cells = {}
         for key in ("tl", "tr", "bl", "br"):
             if key in self.active_cells:
                 self.cells[key] = {"damage": 0, "side": None}
         self.image = self.build_image()
-        self.mask = pygame.mask.from_surface(self.image)
+        self.mask = self.create_mask()
+
     
     def build_image(self):
         wall_surf = pygame.Surface((32, 32), pygame.SRCALPHA)
-        positions = {
-            "tl": (0, 0),
-            "tr": (16, 0),
-            "bl": (0, 16),
-            "br": (16, 16)
-        }
+        positions = {"tl": (0, 0), "tr": (16, 0), "bl": (0, 16), "br": (16, 16)}
         base_sprite = get_sprite(self.base_x, self.base_y, 16, 16)
         for key, pos in positions.items():
             if key not in self.active_cells:
                 continue
             cell = self.cells[key]
             if cell["damage"] >= 16:
-                continue  # элемент полностью уничтожен
+                continue
             cell_surf = pygame.Surface((16, 16), pygame.SRCALPHA)
             if cell["damage"] == 0 or cell["side"] is None:
                 cell_surf.blit(base_sprite, (0, 0))
@@ -527,12 +513,21 @@ class BrickWall(pygame.sprite.Sprite):
                     cell_surf.blit(remaining, (0, 0))
                 else:
                     cell_surf.blit(base_sprite, (0, 0))
-            wall_surf.blit(cell_surf, positions[key])
+            wall_surf.blit(cell_surf, pos)
         return wall_surf
+
+    def create_mask(self):
+        mask = pygame.mask.from_surface(self.image)
+        smaller_mask = pygame.mask.Mask((mask.get_size()[0] - 1, mask.get_size()[1] - 1))
+        for y in range(smaller_mask.get_size()[1]):
+            for x in range(smaller_mask.get_size()[0]):
+                if mask.get_at((x, y)):
+                    smaller_mask.set_at((x, y), 1)
+        return smaller_mask
 
     def update_image(self):
         self.image = self.build_image()
-        self.mask = pygame.mask.from_surface(self.image)
+        self.mask = self.create_mask()
     
     def take_damage(self, bullet):
         local_x = bullet.rect.centerx - self.rect.x
@@ -682,7 +677,7 @@ class ConcreteWall(pygame.sprite.Sprite):
             if key in self.active_cells:
                 self.cells[key] = {"damage": 0, "side": None}
         self.image = self.build_image()
-        self.mask = pygame.mask.from_surface(self.image)
+        self.mask = self.create_mask()
 
     def build_image(self):
         wall_surf = pygame.Surface((32, 32), pygame.SRCALPHA)
@@ -714,12 +709,21 @@ class ConcreteWall(pygame.sprite.Sprite):
                     cell_surf.blit(remaining, (0, 0))
                 else:
                     cell_surf.blit(base_sprite, (0, 0))
-            wall_surf.blit(cell_surf, positions[key])
+            wall_surf.blit(cell_surf, pos)
         return wall_surf
+
+    def create_mask(self):
+        mask = pygame.mask.from_surface(self.image)
+        smaller_mask = pygame.mask.Mask((mask.get_size()[0] - 1, mask.get_size()[1] - 1))
+        for y in range(smaller_mask.get_size()[1]):
+            for x in range(smaller_mask.get_size()[0]):
+                if mask.get_at((x, y)):
+                    smaller_mask.set_at((x, y), 1)
+        return smaller_mask
 
     def update_image(self):
         self.image = self.build_image()
-        self.mask = pygame.mask.from_surface(self.image)
+        self.mask = self.create_mask()
 
     def take_damage(self, bullet):
         global player_upgrade_level
@@ -826,10 +830,6 @@ class ConcreteWall(pygame.sprite.Sprite):
 # =========================
 class Water(pygame.sprite.Sprite):
     def __init__(self, x, y, active_cells=("tl", "tr", "bl", "br")):
-        """
-        Шаблон блока воды, состоящего из 4 элементов 16x16.
-        Позже можно задать координаты спрайта и свойства поведения.
-        """
         super().__init__()
         self.active_cells = set(active_cells)
         self.rect = pygame.Rect(x, y, 32, 32)
@@ -845,7 +845,7 @@ class Water(pygame.sprite.Sprite):
         self.last_update = pygame.time.get_ticks()
         self.frame_duration = 500  # 500 мс на кадр
         self.image = self.frames[self.current_frame]
-        self.mask = pygame.mask.from_surface(self.image)
+        self.mask = self.create_mask()
     
     def build_image(self, offset_x):
         water_surf = pygame.Surface((32, 32), pygame.SRCALPHA)
@@ -856,30 +856,35 @@ class Water(pygame.sprite.Sprite):
                 water_surf.blit(base_sprite, pos)
         return water_surf
 
+    def create_mask(self):
+        mask = pygame.mask.from_surface(self.image)
+        smaller_mask = pygame.mask.Mask((mask.get_size()[0] - 1, mask.get_size()[1] - 1))
+        for y in range(smaller_mask.get_size()[1]):
+            for x in range(smaller_mask.get_size()[0]):
+                if mask.get_at((x, y)):
+                    smaller_mask.set_at((x, y), 1)
+        return smaller_mask
+
     def update(self):
         now = pygame.time.get_ticks()
         if now - self.last_update > self.frame_duration:
             self.last_update = now
             self.current_frame = (self.current_frame + 1) % len(self.frames)
             self.image = self.frames[self.current_frame]
-            self.mask = pygame.mask.from_surface(self.image)
+            self.mask = self.create_mask()
 
 # =========================
 # Класс ледяного блока (шаблон)
 # =========================
 class Ice(pygame.sprite.Sprite):
     def __init__(self, x, y, active_cells=("tl", "tr", "bl", "br")):
-        """
-        Шаблон блока льда, состоящего из 4 элементов 16x16.
-        Позже можно задать координаты спрайта и свойства поведения.
-        """
         super().__init__()
         self.active_cells = set(active_cells)
         self.rect = pygame.Rect(x, y, 32, 32)
         self.base_x = 544
         self.base_y = 144
         self.image = self.build_image()
-        self.mask = pygame.mask.from_surface(self.image)
+        self.mask = self.create_mask()
     
     def build_image(self):
         ice_surf = pygame.Surface((32, 32), pygame.SRCALPHA)
@@ -889,6 +894,15 @@ class Ice(pygame.sprite.Sprite):
             if key in self.active_cells:
                 ice_surf.blit(base_sprite, pos)
         return ice_surf
+    
+    def create_mask(self):
+        mask = pygame.mask.from_surface(self.image)
+        smaller_mask = pygame.mask.Mask((mask.get_size()[0] - 1, mask.get_size()[1] - 1))
+        for y in range(smaller_mask.get_size()[1]):
+            for x in range(smaller_mask.get_size()[0]):
+                if mask.get_at((x, y)):
+                    smaller_mask.set_at((x, y), 1)
+        return smaller_mask
 
 # =========================
 # Класс отображения очков
@@ -913,11 +927,11 @@ class ScorePopup(pygame.sprite.Sprite):
 class Bonus(pygame.sprite.Sprite):
     def __init__(self, pos):
         super().__init__()
-        # Выбираем бонус с использованием random.choices по весам
         self.bonus_data = random.choices(bonus_definitions, weights=[bd["weight"] for bd in bonus_definitions])[0]
         self.type = self.bonus_data["type"]
         self.image = self.bonus_data["sprite"]
         self.rect = self.image.get_rect(center=pos)
+        self.mask = pygame.mask.Mask((20, 20), fill=True)
         self.spawn_time = pygame.time.get_ticks()
         all_sprites.add(self)
         bonus_group.add(self)
@@ -927,7 +941,6 @@ class Bonus(pygame.sprite.Sprite):
 
     def update(self):
         now = pygame.time.get_ticks()
-        # Моргание значка каждые 250 мс
         if now - self.last_blink_time >= 250:
             self.blink_state = not self.blink_state
             self.last_blink_time = now
@@ -962,6 +975,11 @@ def spawn_bonus():
         rand_row = random.randint(1, rows)
         bonus_x = LEFT_MARGIN + (rand_col * CELL_SIZE) - CELL_SIZE // 2
         bonus_y = TOP_MARGIN + (rand_row * CELL_SIZE) - CELL_SIZE // 2
+        # Добавляем случайное смещение на 16 пикселей
+        offset_x = random.choice([-16, 0, 16])
+        offset_y = random.choice([-16, 0, 16])
+        bonus_x += offset_x
+        bonus_y += offset_y
         if can_spawn_bonus_at((bonus_x, bonus_y)):
             Bonus((bonus_x, bonus_y))
             break
@@ -1193,13 +1211,10 @@ class Tank(pygame.sprite.Sprite):
         self.is_player = is_player
         self.shoot_cooldown = 0
         
-        # 1) Изначально задаём self.sprites чем-то, чтобы не получить AttributeError
         if is_player:
-            # Например, уровень 1 по умолчанию
             self.sprites = player_sprites_level1
             self.speed = 3
         else:
-            # Если враг – берём enemy_sprites
             self.speed = 2
             if enemy_type is None:
                 enemy_type = 1
@@ -1208,20 +1223,20 @@ class Tank(pygame.sprite.Sprite):
                 for direction, frames in enemy_sprites[enemy_type].items()
             }
 
-        # 2) После этого уже можем смело брать "direction" и "current_sprite"
         self.direction = "up"
         self.current_sprite = 0
         self.image = self.sprites[self.direction][self.current_sprite]
         self.rect = self.image.get_rect(center=(x, y))
 
-        # 3) Если это игрок – донастраиваем
+        # Создаем маску 28x28 пикселей для танка
+        self.mask = pygame.mask.Mask((25, 25), fill=True)
+
         if is_player:
-            self.bullet_speed = 5 #bullet speed
+            self.bullet_speed = 5
             self.can_double_shot = False
             self.armor_piercing = False
             self.set_upgrade_level(upgrade_level)
         
-        # Прочие поля
         self.last_update = pygame.time.get_ticks()
         self.animation_interval = 60
         self.is_alive = True
@@ -1231,10 +1246,8 @@ class Tank(pygame.sprite.Sprite):
         self.shots_in_burst = 0
         self.last_shot_time = 0
         
-        # Для врагов
         self.enemy_type = enemy_type
         
-        ### НОВОЕ: Если это игрок – применим сразу уровень upgrade_level
         if is_player:
             self.set_upgrade_level(upgrade_level)
 
@@ -1326,9 +1339,8 @@ class Tank(pygame.sprite.Sprite):
                 if isinstance(obstacle, Ice):
                     continue
                 if hasattr(obstacle, 'mask'):
-                    tank_mask = pygame.mask.from_surface(self.image)
                     offset = (obstacle.rect.x - self.rect.x, obstacle.rect.y - self.rect.y)
-                    if tank_mask.overlap(obstacle.mask, offset):
+                    if self.mask.overlap(obstacle.mask, offset):
                         self.rect = old_rect
                         break
                 else:
@@ -1442,7 +1454,7 @@ class Tank(pygame.sprite.Sprite):
 
     def _do_shot(self):
         """Непосредственно создаёт пулю."""
-        offset = 1  # Смещение от края танка
+        offset = -2  # Смещение от края танка
         if self.direction == "up":
             bullet_x = self.rect.centerx
             bullet_y = self.rect.top - offset
@@ -1500,23 +1512,22 @@ class Enemy(Tank):
         self.destroy_time = None
         self.enemy_type = enemy_type
         self.armor_level = armor_level
-        self.path = []  # Добавляем атрибут для хранения текущего пути
-        self.target = None  # Добавляем атрибут для хранения текущей цели
-        self.last_position = self.rect.center  # Добавляем атрибут для отслеживания последней позиции
-        self.stuck_time = 0  # Добавляем атрибут для отслеживания времени застревания
-        self.max_stuck_duration = 5000  # Максимальное время застревания (5 секунд)
-        self.distance_to_hq = float('inf')  # Добавляем атрибут для хранения расстояния до штаба
-        self.can_double_shot = False  # Добавляем атрибут can_double_shot
-        self.enemy_shoot_cooldown = 0  # Добавляем атрибут для кулдауна выстрелов врагов
-        self.stuck_counter = 0  # Добавляем атрибут stuck_counter
+        self.path = []
+        self.target = None
+        self.last_position = self.rect.center
+        self.stuck_time = 0
+        self.max_stuck_duration = 5000
+        self.distance_to_hq = float('inf')
+        self.can_double_shot = False
+        self.enemy_shoot_cooldown = 0
+        self.stuck_counter = 0
         if enemy_type == 4:
             self.max_health = armor_level + 1
             self.health = self.max_health
             self._update_color()
         self.image = self.sprites[self.direction][self.current_sprite]
         self.rect = self.image.get_rect(center=self.rect.center)
-        # Уменьшаем интервал анимации для врагов
-        self.animation_interval = 30  # Была 60 мс, теперь 30 мс
+        self.animation_interval = 30
         
         if enemy_type == 1:
             self.speed = 2
@@ -1539,11 +1550,34 @@ class Enemy(Tank):
             self.score_value = 400
             self._update_color()
         
-        # Мерцание для определенных танков
         self.is_special = enemy_counter in [4, 11, 18]
         self.blink_state = False
         self.last_blink = 0
     
+    def choose_target(self):
+        hq = next((spr for spr in obstacles if isinstance(spr, Headquarters)), None)
+        if hq and not hq.destroyed:
+            hq_distance = self.get_distance_to(hq.rect.center)
+        else:
+            hq_distance = float('inf')
+
+        if player and player.is_alive:
+            player_distance = self.get_distance_to(player.rect.center)
+        else:
+            player_distance = float('inf')
+
+        if hq_distance < player_distance:
+            self.target = hq.rect.center
+            self.target_priority = 0.8  # Повышенный приоритет
+        elif player and player.is_alive:
+            self.target = player.rect.center
+            self.target_priority = 0.4
+        else:
+            self.target = None
+
+    def get_distance_to(self, target):
+        return ((self.rect.centerx - target[0]) ** 2 + (self.rect.centery - target[1]) ** 2) ** 0.5
+
     def shoot(self):
         if game_over:  # Блокируем стрельбу при game_over
             return
@@ -1690,20 +1724,6 @@ class Enemy(Tank):
             bonus_y = TOP_MARGIN + (rand_row * CELL_SIZE) - CELL_SIZE // 2
             Bonus((bonus_x, bonus_y))
             bonus_active = True
-
-    def choose_target(self):
-        # После уничтожения 15 врагов усиливаем атаку на штаб
-        hq = next((spr for spr in obstacles if isinstance(spr, Headquarters)), None)
-        attack_hq = (enemies_to_spawn < 5 or random.random() < 0.4) and hq
-        
-        if attack_hq and not hq.destroyed:
-            self.target = hq.rect.center
-            self.target_priority = 0.8  # Повышенный приоритет
-        elif player and player.is_alive:
-            self.target = player.rect.center
-            self.target_priority = 0.4
-        else:
-            self.target = None
 
     def handle_stuck(self):
         # Усовершенствованная система определения застревания
@@ -2940,7 +2960,7 @@ while True:
             bonus_channel.play(bonus_life_sound)  # проигрываем звук bonus_life.ogg
             score_life_100000_awarded = True    
         # Если уровень окончен (все 20 врагов убиты)
-        if enemies_remaining_level <= 0 and enemies_to_spawn == 0 and len(enemies) == 0 and len(spawn_group) == 0:
+        if enemies_remaining_level <= 0 and enemies_to_spawn <= 0 and len(enemies) <= 0 and len(spawn_group) <= 0:
             if level_complete_time is None:
                 level_complete_time = now
 
