@@ -12,8 +12,56 @@ if pygame.joystick.get_count() > 0:
     joystick.init()
     joystick_name = joystick.get_name()
     print(f"Joystick initialized: {joystick_name}")
-    if "Dual" in joystick_name:
+    if "Dual" in joystick_name or "PS4" in joystick_name:
         joystick_type = "playstation"
+    elif "Nintendo" in joystick_name:
+        joystick_type = "nintendo"
+
+# Маппинг кнопок для различных типов джойстиков
+button_mapping = {
+    "default": {
+        "A": 1,
+        "B": 0,
+        "left": 13,
+        "right": 14,
+        "up": 11,
+        "down": 12,
+        "start": 7,
+        "back": 6,
+        "hat_up": (0, 1),
+        "hat_down": (0, -1),
+        "hat_left": (-1, 0),
+        "hat_right": (1, 0)
+    },
+    "playstation": {
+        "A": 1,
+        "B": 0,
+        "left": 13,
+        "right": 14,
+        "up": 11,
+        "down": 12,
+        "start": 6,
+        "back": 4,
+        "hat_up": (0, 1),
+        "hat_down": (0, -1),
+        "hat_left": (-1, 0),
+        "hat_right": (1, 0)
+    },
+    "nintendo": {
+        "A": 0,
+        "B": 1,
+        "left": 13,
+        "right": 14,
+        "up": 11,
+        "down": 12,
+        "start": 6,
+        "back": 4,
+        "hat_up": (0, 1),
+        "hat_down": (0, -1),
+        "hat_left": (-1, 0),
+        "hat_right": (1, 0)
+    }
+}
 
 # =========================
 # Параметры отладки
@@ -2169,7 +2217,7 @@ def level_transition(level):
     last_change_time = 0
     acceleration_delay = 500  # Задержка перед ускоренным изменением
     acceleration_interval = 90  # Интервал при ускорении
-    last_start_press_time = 0  # Время последнего нажатия кнопки start
+    last_start_press_time = pygame.time.get_ticks()  # Время последнего нажатия кнопки start
 
     while selecting:
         for event in pygame.event.get():
@@ -2180,14 +2228,10 @@ def level_transition(level):
         keys = pygame.key.get_pressed()
         joystick_buttons = {}
         if joystick:
-            if joystick_type == "playstation":
-                joystick_buttons['left'] = joystick.get_button(0)
-                joystick_buttons['right'] = joystick.get_button(1)
-                joystick_buttons['start'] = joystick.get_button(6)
-            else:
-                joystick_buttons['left'] = joystick.get_button(0)
-                joystick_buttons['right'] = joystick.get_button(1)
-                joystick_buttons['start'] = joystick.get_button(7)
+            mapping = button_mapping[joystick_type]
+            joystick_buttons['left'] = joystick.get_button(mapping['B'])
+            joystick_buttons['right'] = joystick.get_button(mapping['A'])
+            joystick_buttons['start'] = joystick.get_button(mapping['start'])
         
         # Изменение уровня
         change_amount = 0
@@ -2214,7 +2258,7 @@ def level_transition(level):
         # Подтверждение выбора
         if keys[pygame.K_SPACE] or keys[pygame.K_RETURN] or joystick_buttons.get('start'):
             # Проверяем время последнего нажатия кнопки start
-            if now - last_start_press_time > 4000:  # 4с задержка
+            if now - last_start_press_time > 500:  # 500мс задержка
                 selecting = False
                 last_start_press_time = now
         
@@ -2242,7 +2286,7 @@ def level_transition(level):
         pygame.display.flip()
         clock.tick(60)
     
-    #Продолжаем обычную загрузку уровня
+    # Продолжаем обычную загрузку уровня
     selected_level = max(1, min(35, selected_level))  # Ограничение уровней от 1 до 35
 
     # 0. Очистка всех спрайтов
@@ -2466,20 +2510,21 @@ def main_menu():
             # Обработка джойстика
             if event.type == pygame.JOYBUTTONDOWN:
                 if now >= menu_start_time + 1000 + slide_duration:
-                    if joystick_type == "playstation":
-                        if event.button == 11:
-                            selection_index = (selection_index - 1) % len(option_texts)
-                        elif event.button == 12:
-                            selection_index = (selection_index + 1) % len(option_texts)
-                        elif event.button == 6:
-                            selected_mode = selection_index
-                    else:
-                        if event.button == 0:
-                            selection_index = (selection_index - 1) % len(option_texts)
-                        elif event.button == 1:
-                            selection_index = (selection_index + 1) % len(option_texts)
-                        elif event.button == 7:
-                            selected_mode = selection_index
+                    mapping = button_mapping[joystick_type]
+                    if event.button == mapping['up']:
+                        selection_index = (selection_index - 1) % len(option_texts)
+                    elif event.button == mapping['down']:
+                        selection_index = (selection_index + 1) % len(option_texts)
+                    elif event.button == mapping['start']:
+                        selected_mode = selection_index
+            if event.type == pygame.JOYHATMOTION:
+                if now >= menu_start_time + 1000 + slide_duration:
+                    hat = event.value
+                    mapping = button_mapping[joystick_type]
+                    if hat == mapping['hat_up']:
+                        selection_index = (selection_index - 1) % len(option_texts)
+                    elif hat == mapping['hat_down']:
+                        selection_index = (selection_index + 1) % len(option_texts)
 
         # Рисуем меню
         menu_surface = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT))
@@ -2538,6 +2583,7 @@ while True:
             pygame.quit()
             sys.exit()
         if event.type == pygame.KEYDOWN:
+            print(f"Key pressed: {pygame.key.name(event.key)}")
             if event.key == pygame.K_ESCAPE:
                 paused = not paused
                 pause_sound.play()
@@ -2566,50 +2612,44 @@ while True:
         if event.type == pygame.JOYHATMOTION:
             # Получаем значение D-pad:
             hat = event.value  # tuple (x, y)
+            print(f"Joystick D-pad: {hat}")
+            # Обновляем словарь input_keys по данным D-pad
+            input_keys = {
+                pygame.K_UP: hat[1] == 1,
+                pygame.K_DOWN: hat[1] == -1,
+                pygame.K_LEFT: hat[0] == -1,
+                pygame.K_RIGHT: hat[0] == 1
+            }
+            if player is not None:
+                player.update(input_keys)
             # Вы можете сохранить его в глобальной переменной, например, joystick_hat = hat
         if event.type == pygame.JOYBUTTONDOWN:
-            if joystick_type == "playstation":
-                if event.button == 6:
-                    paused = not paused
-                    pause_sound.play()
-                    if paused:
-                        player_sound_channel.stop()
-                        current_player_sound = None
+            mapping = button_mapping[joystick_type]
+            print(f"Joystick button pressed: {event.button}")
+            for key, value in mapping.items():
+                if event.button == value:
+                    print(f"Mapped button: {key}")
+            if event.button == mapping['start']:
+                paused = not paused
+                pause_sound.play()
+                if paused:
+                    player_sound_channel.stop()
+                    current_player_sound = None
+                else:
+                    current_player_sound = None
+                    paused_frame = None
+            elif event.button == mapping['back'] and not paused:
+                if player is not None:
+                    player.shield_active = not player.shield_active
+                    player.shield_unlimited = True
+                    if player.shield_active:
+                        player.shield_start = pygame.time.get_ticks()
+                        shield_end_time = float('inf')
                     else:
-                        current_player_sound = None
-                        paused_frame = None
-                elif event.button == 4 and not paused:
-                    if player is not None:
-                        player.shield_active = not player.shield_active
-                        player.shield_unlimited = True
-                        if player.shield_active:
-                            player.shield_start = pygame.time.get_ticks()
-                            shield_end_time = float('inf')
-                        else:
-                            shield_end_time = 0
-                elif not paused and player is not None and event.button != 4 and event.button != 6 and event.button != 11 and event.button != 12 and event.button != 13 and event.button != 14:
-                    player.shoot()
-            else:
-                if event.button == 7:
-                    paused = not paused
-                    pause_sound.play()
-                    if paused:
-                        player_sound_channel.stop()
-                        current_player_sound = None
-                    else:
-                        current_player_sound = None
-                        paused_frame = None
-                elif event.button == 6 and not paused:
-                    if player is not None:
-                        player.shield_active = not player.shield_active
-                        player.shield_unlimited = True
-                        if player.shield_active:
-                            player.shield_start = pygame.time.get_ticks()
-                            shield_end_time = float('inf')
-                        else:
-                            shield_end_time = 0
-                elif not paused and player is not None and event.button != 6 and event.button != 7:
-                    player.shoot()
+                        shield_end_time = 0
+            elif not paused and player is not None and event.button in [mapping['A'], mapping['B']]:
+                player.shoot()
+
     if not paused:
         now = pygame.time.get_ticks()
         # Спавн врагов
@@ -2648,33 +2688,33 @@ while True:
 
         # Если джойстик подключён, обновляем словарь input_keys по данным D-pad
         if joystick is not None:
-            if joystick_type == "playstation":
-                if joystick.get_button(11):
+            mapping = button_mapping[joystick_type]
+            if joystick_type == "default":
+                hat = joystick.get_hat(0)
+                if hat == mapping['hat_up']:
                     input_keys[pygame.K_UP] = True
                     input_keys[pygame.K_w] = True
-                elif joystick.get_button(12):
+                elif hat == mapping['hat_down']:
                     input_keys[pygame.K_DOWN] = True
                     input_keys[pygame.K_s] = True
-                if joystick.get_button(13):
+                if hat == mapping['hat_left']:
                     input_keys[pygame.K_LEFT] = True
                     input_keys[pygame.K_a] = True
-                elif joystick.get_button(14):
+                elif hat == mapping['hat_right']:
                     input_keys[pygame.K_RIGHT] = True
                     input_keys[pygame.K_d] = True
-            else:
-                hat = joystick.get_hat(0)  # Получаем значение D-pad (tuple (x, y))
-                if hat[1] == 1:
-                    input_keys[pygame.K_UP] = True
-                    input_keys[pygame.K_w] = True
-                elif hat[1] == -1:
-                    input_keys[pygame.K_DOWN] = True
-                    input_keys[pygame.K_s] = True
-                if hat[0] == -1:
-                    input_keys[pygame.K_LEFT] = True
-                    input_keys[pygame.K_a] = True
-                elif hat[0] == 1:
-                    input_keys[pygame.K_RIGHT] = True
-                    input_keys[pygame.K_d] = True
+            if 'up' in mapping and mapping['up'] < joystick.get_numbuttons() and joystick.get_button(mapping['up']):
+                input_keys[pygame.K_UP] = True
+                input_keys[pygame.K_w] = True
+            elif 'down' in mapping and mapping['down'] < joystick.get_numbuttons() and joystick.get_button(mapping['down']):
+                input_keys[pygame.K_DOWN] = True
+                input_keys[pygame.K_s] = True
+            if 'left' in mapping and mapping['left'] < joystick.get_numbuttons() and joystick.get_button(mapping['left']):
+                input_keys[pygame.K_LEFT] = True
+                input_keys[pygame.K_a] = True
+            elif 'right' in mapping and mapping['right'] < joystick.get_numbuttons() and joystick.get_button(mapping['right']):
+                input_keys[pygame.K_RIGHT] = True
+                input_keys[pygame.K_d] = True
         if player is not None:
             player.update(input_keys)
         player_bullets.update()
