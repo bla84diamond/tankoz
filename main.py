@@ -68,6 +68,7 @@ button_mapping = {
 # =========================
 show_grid = False        # Видимость сетки
 show_masks = False       # Добавлено для отображения масок
+show_paths = False  # Переключатель отображения пути для танков врагов
 
 # =========================
 # Глобальные переменные
@@ -79,7 +80,7 @@ bonus_active = False  # Флаг активного бонуса
 bonus_pos = (0, 0)  # Позиция бонуса
 bonus_blink = False  # Состояние мерцания бонуса
 last_bonus_blink = 0  # Время последнего мерцания
-enemy_counter = 0  # Счетчик появившихся врагов
+enemy_counter = 1  # Счетчик появившихся врагов
 # Глобальные переменные для бонусов и эффекта остановки времени
 enemy_stop = False
 enemy_stop_end_time = 0
@@ -1238,7 +1239,7 @@ class Tank(pygame.sprite.Sprite):
             self.set_upgrade_level(upgrade_level)
         
         self.last_update = pygame.time.get_ticks()
-        self.animation_interval = 60
+        self.animation_interval = 25
         self.is_alive = True
         self.is_moving = False
         self.last_key = None
@@ -1505,7 +1506,6 @@ class Enemy(Tank):
     def __init__(self, x, y, initial_direction, enemy_type=1, armor_level=1):
         super().__init__(x, y, is_player=False, enemy_type=enemy_type)
         global enemy_counter
-        enemy_counter += 1
         self.change_direction_time = pygame.time.get_ticks() + random.randint(1000, 5000)
         self.speed = 2
         self.direction = initial_direction
@@ -1527,7 +1527,7 @@ class Enemy(Tank):
             self._update_color()
         self.image = self.sprites[self.direction][self.current_sprite]
         self.rect = self.image.get_rect(center=self.rect.center)
-        self.animation_interval = 30
+        self.animation_interval = 15
         
         if enemy_type == 1:
             self.speed = 2
@@ -1553,6 +1553,9 @@ class Enemy(Tank):
         self.is_special = enemy_counter in [4, 11, 18]
         self.blink_state = False
         self.last_blink = 0
+
+        # Добавляем случайный цвет для пути
+        self.path_color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
     
     def choose_target(self):
         hq = next((spr for spr in obstacles if isinstance(spr, Headquarters)), None)
@@ -1574,6 +1577,7 @@ class Enemy(Tank):
             self.target_priority = 0.4
         else:
             self.target = None
+            self.target_priority = 0.0
 
     def get_distance_to(self, target):
         return ((self.rect.centerx - target[0]) ** 2 + (self.rect.centery - target[1]) ** 2) ** 0.5
@@ -1784,10 +1788,7 @@ class Enemy(Tank):
                 self.path.pop(0)
                 if not self.path:
                     self.target = None
-        #else:
-            # Случайное движение, если нет пути
-            #№if random.random() < 0.05:  # Уменьшаем вероятность случайного изменения направления
-            #    self.direction = random.choice(["up", "down", "left", "right"])
+                    self.path = []  # Очищаем путь, когда цель достигнута
 
         if self.direction == "up":
             self.rect.y -= self.speed
@@ -2046,7 +2047,7 @@ def next_level():
     level_transition(current_level)
     enemies_to_spawn = 20
     enemies_remaining_level = 20
-    enemy_counter = 0
+    enemy_counter = 1
     reset_grid()
     # Удаляем все оставшиеся вражеские спрайты, если таковые остались
     for enemy in list(enemies):
@@ -2145,7 +2146,7 @@ def spawn_enemy_callback(pos):
     enemies.add(temp_enemy)
     tank_group.add(temp_enemy)
     all_sprites.add(temp_enemy)
-
+    enemy_counter += 1
     enemies_to_spawn -= 1
     update_grid_after_spawn()
     spawn_occupancy[pos] = False
@@ -2629,6 +2630,8 @@ while True:
                     show_grid = not show_grid
                 if event.key == pygame.K_F3:
                     show_masks = not show_masks  # Переключаем отображение масок
+                if event.key == pygame.K_F4:
+                    show_paths = not show_paths  # Переключаем отображение пути
         if event.type == pygame.JOYHATMOTION:
             # Получаем значение D-pad:
             hat = event.value  # tuple (x, y)
@@ -2977,6 +2980,14 @@ while True:
         if show_masks:
             for obstacle in obstacles:
                 pygame.draw.rect(screen, (255, 255, 0), obstacle.rect, 1)
+
+        # Отображение путей танков врагов
+        if show_paths:
+            for enemy in enemies:
+                if enemy.path:
+                    print(f"Enemy {enemy} path: {enemy.path}")
+                    for i in range(len(enemy.path) - 1):
+                        pygame.draw.line(screen, enemy.path_color, enemy.path[i], enemy.path[i + 1], 2)
     else:
         # Режим паузы: игра не обновляется, отображается предыдущий кадр с наложением мигающей надписи PAUSE
         now = pygame.time.get_ticks()
